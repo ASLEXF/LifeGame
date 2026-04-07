@@ -359,6 +359,15 @@ namespace ParticleLife.Simulation
         /// <summary>Inspector-configured max velocity; used by PlayerControl for shedding ratio.</summary>
         public float MaxVelocity => _maxVelocity;
 
+        /// <summary>Spatial grid built each FixedUpdate. Valid for reading after LateUpdate completes the job.</summary>
+        public NativeParallelMultiHashMap<int2, int> Grid => _grid;
+
+        /// <summary>Current spatial grid cell size (= MaxDistanceThreshold). Recalculated when distanceThreshold changes.</summary>
+        public float CellSize => _cellSize;
+
+        /// <summary>Maximum particle capacity. Use to allocate companion NativeArrays at the same size.</summary>
+        public int MaxParticleCount => _maxParticleCount;
+
         /// <summary>
         /// Resets all particle state and re-spawns the initial population.
         /// Call before GameStateManager.RestartSession() to ensure a clean slate.

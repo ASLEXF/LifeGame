@@ -51,15 +51,13 @@ namespace ParticleLife.Player
         private byte  _playerType;
         private float _zeroTimer;
 
-        // Snapshot of player-owned state at the start of each adoption pass.
-        // Prevents cascading adoption: newly adopted particles don't trigger further
-        // adoptions within the same frame.
-        private bool[] _adoptionSnapshot;
-
         // Union-Find arrays, reused each frame (allocated once at Start).
         // _ufSize tracks component size and is used for union-by-size (balanced trees).
         private int[] _ufParent;
         private int[] _ufSize;
+
+        // Visited marker array, reused for BFS in AssignInitialCluster.
+        private bool[] _bfsVisited;
 
         /// <summary>Player-owned particle count this frame (equals MainClusterSize after split resolution).</summary>
         public int PlayerParticleCount { get; private set; }
@@ -86,10 +84,10 @@ namespace ParticleLife.Player
 
         private void Start()
         {
-            int maxCount      = _simulation.PositionsRead.Length;
-            _adoptionSnapshot = new bool[maxCount];
-            _ufParent         = new int[maxCount];
-            _ufSize           = new int[maxCount];
+            int maxCount  = _simulation.MaxParticleCount;
+            _bfsVisited   = new bool[maxCount];
+            _ufParent     = new int[maxCount];
+            _ufSize       = new int[maxCount];
 
             _gameState.OnStateChanged += OnStateChanged;
         }
@@ -135,8 +133,8 @@ namespace ParticleLife.Player
             // 3. Input direction + cluster size → physics job
             _simulation.SetPlayerInput(ResolveDirection(), PlayerParticleCount);
 
-            // 4. Adopt same-type adjacent non-player particles
-            AdoptSameTypeAdjacent(positions, isPlayerOwned, types, count);
+            // 4. Adopt same-type non-player particles via BFS over spatial grid
+            AdoptSameTypeBFS(positions, isPlayerOwned, types, count);
 
             // 5. Shed edge particles
             ShedEdge(positions, isPlayerOwned, velocities, count, ClusterCentroid);
@@ -215,12 +213,12 @@ namespace ParticleLife.Player
             // Step 2: BFS flood-fill from bestIndex.
             // Only particles reachable via a chain of _connectionRadius-adjacent same-type
             // particles are adopted, guaranteeing one connected component.
-            // Reuse _adoptionSnapshot as the "enqueued" marker (one-time allocation is fine).
+            // Reuse _bfsVisited as the "enqueued" marker (one-time allocation is fine).
             for (int i = 0; i < count; i++)
-                _adoptionSnapshot[i] = false;
+                _bfsVisited[i] = false;
 
             var queue = new System.Collections.Generic.Queue<int>();
-            _adoptionSnapshot[bestIndex] = true;
+            _bfsVisited[bestIndex] = true;
             _simulation.SetPlayerOwned(bestIndex, true);
             queue.Enqueue(bestIndex);
 
@@ -231,10 +229,10 @@ namespace ParticleLife.Player
 
                 for (int j = 0; j < count; j++)
                 {
-                    if (_adoptionSnapshot[j] || types[j] != _playerType) continue;
+                    if (_bfsVisited[j] || types[j] != _playerType) continue;
                     if (math.distancesq(posC, positions[j]) >= adoptSq) continue;
 
-                    _adoptionSnapshot[j] = true;
+                    _bfsVisited[j] = true;
                     _simulation.SetPlayerOwned(j, true);
                     queue.Enqueue(j);
                 }
@@ -368,39 +366,52 @@ namespace ParticleLife.Player
         // ── Adoption ──────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Non-player particles of the same type as the player cluster that are
-        /// directly adjacent to any player particle are immediately adopted.
-        ///
-        /// Uses a snapshot of isPlayerOwned taken before the scan begins so that
-        /// particles adopted during this pass cannot trigger further adoptions in
-        /// the same frame (prevents cascading flood-fill across the whole world).
+        /// Adopts non-player particles of the same type as the player cluster via
+        /// BFS over the spatial grid. Transitively expands through chains of same-type
+        /// neighbours within cellSize, so the entire reachable same-type neighbourhood
+        /// is adopted in one pass rather than one hop per frame.
         /// </summary>
-        private void AdoptSameTypeAdjacent(
+        private void AdoptSameTypeBFS(
             NativeArray<float2> positions,
             NativeArray<bool>   isPlayerOwned,
             NativeArray<byte>   types,
-            int count)
+            int                 count)
         {
-            // Snapshot: only particles that were player-owned before this pass
-            // serve as adoption sources.
-            for (int i = 0; i < count; i++)
-                _adoptionSnapshot[i] = isPlayerOwned[i];
+            NativeParallelMultiHashMap<int2, int> grid     = _simulation.Grid;
+            float                                 cellSize = _simulation.CellSize;
+            var                                   queue    = new NativeQueue<int>(Allocator.Temp);
 
-            float threshSq = _connectionRadius * _connectionRadius;
+            // Seed: all currently player-owned particles
             for (int i = 0; i < count; i++)
             {
-                if (isPlayerOwned[i] || types[i] != _playerType) continue;
+                if (isPlayerOwned[i])
+                    queue.Enqueue(i);
+            }
 
-                for (int j = 0; j < count; j++)
+            while (queue.TryDequeue(out int idx))
+            {
+                int2 cell = (int2)math.floor(positions[idx] / cellSize);
+
+                for (int dx = -1; dx <= 1; dx++)
+                for (int dy = -1; dy <= 1; dy++)
                 {
-                    if (!_adoptionSnapshot[j]) continue;  // only check pre-frame owners
-                    if (math.distancesq(positions[i], positions[j]) < threshSq)
+                    int2 neighborCell = cell + new int2(dx, dy);
+                    if (!grid.TryGetFirstValue(neighborCell, out int j, out var it)) continue;
+
+                    do
                     {
-                        _simulation.SetPlayerOwned(i, true);
-                        break;
+                        if (j >= count || isPlayerOwned[j] || types[j] != _playerType) continue;
+                        if (math.distance(positions[idx], positions[j]) < cellSize)
+                        {
+                            _simulation.SetPlayerOwned(j, true);
+                            queue.Enqueue(j);
+                        }
                     }
+                    while (grid.TryGetNextValue(out j, ref it));
                 }
             }
+
+            queue.Dispose();
         }
 
         // ── Shedding ──────────────────────────────────────────────────────────

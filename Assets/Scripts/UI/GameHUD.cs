@@ -1,6 +1,7 @@
 using ParticleLife.Gameplay;
 using ParticleLife.Management;
 using ParticleLife.Player;
+using ParticleLife.Simulation;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -15,6 +16,7 @@ namespace ParticleLife.UI
     ///   Canvas (Screen Space Overlay)
     ///     Canvas Scaler: Scale With Screen Size, 1920×1080
     ///     └── HUDRoot  ← attach this component
+    ///         ├── Text_ParticleCount   ← _playerParticleCountText   (top-left)
     ///         ├── Text_ParticleCount   ← _particleCountText   (top-left)
     ///         ├── Text_SurvivalTime    ← _survivalTimeText    (top-left, below count)
     ///         └── Slider_Capture       ← _captureSlider       (top or bottom bar)
@@ -23,6 +25,7 @@ namespace ParticleLife.UI
     public class GameHUD : MonoBehaviour
     {
         [Header("UI 引用")]
+        [SerializeField] private TextMeshProUGUI _playerParticleCountText;
         [SerializeField] private TextMeshProUGUI _particleCountText;
         [SerializeField] private TextMeshProUGUI _survivalTimeText;
         [SerializeField] private Slider          _captureSlider;
@@ -31,6 +34,7 @@ namespace ParticleLife.UI
         [SerializeField] private GameStateManager  _gameState;
         [SerializeField] private PlayerControl     _playerControl;
         [SerializeField] private CaptureDetection  _captureDetection;
+        [SerializeField] private ClusterDetector   _clusterDetector;
 
         private void Start()
         {
@@ -52,7 +56,8 @@ namespace ParticleLife.UI
 
             int clusters = _playerControl.ClusterCount;
             string clusterSuffix = clusters > 1 ? $" <color=#ff6644>[{clusters} 团簇]</color>" : "";
-            _particleCountText.text = $"粒子数：{_playerControl.MainClusterSize}{clusterSuffix}";
+            _playerParticleCountText.text = $"玩家粒子数：{_playerControl.MainClusterSize}{clusterSuffix}";
+            _particleCountText.text = $"粒子总数：{_clusterDetector.ClusterParticleCount}";
             _survivalTimeText.text  = $"存活：{FormatTime(_gameState.SessionDuration)}";
 
             float captureFraction = _captureDetection.CaptureDuration > 0f

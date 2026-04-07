@@ -82,7 +82,7 @@ namespace ParticleLife.Gameplay
             float extMag = math.length(externalForceSum);
             float inputMag = math.length(_simulation.PlayerInputForce);
             float dt = Time.deltaTime;
-            Debug.Log($"CaptureDetection: extMag={extMag:F2}, inputMag={inputMag:F2}, captureTimer={_captureTimer:F2}");
+            //Debug.Log($"CaptureDetection: extMag={extMag:F2}, inputMag={inputMag:F2}, captureTimer={_captureTimer:F2}");
             if (extMag < _minExternalForce)
             {
                 // No significant external threat — decay timer
