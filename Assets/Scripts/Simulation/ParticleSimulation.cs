@@ -44,8 +44,8 @@ namespace ParticleLife.Simulation
         private const float IdleVelocityThreshold = 0.5f;
 
         [Header("玩家移动")]
-        [Tooltip("玩家粒子在输入方向上的保证最低速度（世界单位/秒）")]
-        [SerializeField] private float _playerInputSpeed          = 15f;
+        [Tooltip("玩家粒子每帧注入的输入力大小。此力与引力竞争：引力越强，移动越慢。建议调参范围 80–200。")]
+        [SerializeField] private float _playerInputForce          = 150f;
         [Tooltip("玩家粒子速度上限（世界单位/秒），通常低于 MaxVelocity 以保证可控性")]
         [SerializeField] private float _playerMaxSpeed            = 25f;
         [Tooltip("达到此粒子数时，外部力干扰降至最低（满抗性）")]
@@ -207,7 +207,7 @@ namespace ParticleLife.Simulation
                 BoundaryThreshold          = _boundaryThreshold,
                 BoundaryStrength           = _boundaryStrength,
                 PlayerInputDir             = _playerInputDir,
-                PlayerInputSpeed           = _playerInputSpeed,
+                PlayerInputForce           = _playerInputForce,
                 PlayerMaxSpeed             = _playerMaxSpeed,
                 PlayerParticleCount        = _playerParticleCount,
                 PlayerResistanceFullAt     = _playerResistanceFullAt,
@@ -271,7 +271,9 @@ namespace ParticleLife.Simulation
                 _positionsRead[i]  = pos;
                 _positionsWrite[i] = pos;
                 _velocities[i]     = float2.zero;
-                _types[i]          = (byte)rng.NextInt(0, _typeCount);
+                // 轮转分配保证每种 type 数量完全相等（误差 ≤ 1），
+                // 避免随机 seed 导致某些 type 初始偏多、CA 永远无法补到。
+                _types[i]          = (byte)(i % _typeCount);
                 _isPlayerOwned[i]  = false;
                 _idleTime[i]       = 0f;
             }
@@ -301,7 +303,7 @@ namespace ParticleLife.Simulation
         /// Effective player input as a force-scale vector (dir × PlayerInputSpeed).
         /// Read by CaptureDetection to compare against external forces.
         /// </summary>
-        public float2 PlayerInputForce => _playerInputDir * _playerInputSpeed;
+        public float2 PlayerInputForce => _playerInputDir * _playerInputForce;
 
         /// <summary>Returns gravity parameters for typeA acting on typeB.</summary>
         public Core.GravityEntry GetGravityEntry(int typeA, int typeB) =>
@@ -431,6 +433,12 @@ namespace ParticleLife.Simulation
                 };
             }
         }
+
+        /// <summary>
+        /// Forwards the player type to SpawnRipple for player-type-only filtering.
+        /// Call after the player type is determined (e.g. from PlayerControl.AssignInitialCluster).
+        /// </summary>
+        public void SetRipplePlayerType(byte type) => _spawnRipple?.SetPlayerType(type);
 
         /// <summary>Clears the Inspector matrix config so runtime random generation is used instead.</summary>
         [ContextMenu("清除引力矩阵配置（恢复随机）")]

@@ -239,6 +239,7 @@ namespace ParticleLife.Player
             }
 
             _hasAssigned = true;
+            _simulation.SetRipplePlayerType(_playerType);
         }
 
         // ── Split detection (Union-Find, immediate revert) ────────────────────

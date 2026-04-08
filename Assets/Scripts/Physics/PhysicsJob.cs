@@ -41,8 +41,8 @@ namespace ParticleLife.Physics
         [ReadOnly] public float                                  BoundaryStrength;
         /// <summary>Normalised player input direction. Zero vector when no input.</summary>
         [ReadOnly] public float2 PlayerInputDir;
-        /// <summary>Guaranteed minimum speed in PlayerInputDir for player particles.</summary>
-        [ReadOnly] public float  PlayerInputSpeed;
+        /// <summary>Force magnitude injected each frame in PlayerInputDir for player particles.</summary>
+        [ReadOnly] public float  PlayerInputForce;
         /// <summary>Hard velocity cap applied to player particles (replaces MaxVelocity for them).</summary>
         [ReadOnly] public float  PlayerMaxSpeed;
         /// <summary>Current player cluster size. Higher → stronger external-force resistance.</summary>
@@ -117,6 +117,12 @@ namespace ParticleLife.Physics
 
             ExternalForceOnPlayer[i] = isPlayer ? extForce : float2.zero;
 
+            // ── Player input force injection ───────────────────────────────
+            // Adds a directed force that competes with gravity naturally.
+            // In strong gravitational wells the player moves slower; in open space faster.
+            if (isPlayer && math.length(PlayerInputDir) > 0.01f)
+                force += PlayerInputDir * PlayerInputForce;
+
             // ── Player external-force resistance ───────────────────────────
             // Only active when the player is actively pressing input.
             // Without input, external forces are 100% effective (natural drift).
@@ -152,16 +158,6 @@ namespace ParticleLife.Physics
             float speed;
             if (isPlayer)
             {
-                // Guarantee minimum speed in the input direction so the player
-                // can always make progress regardless of external forces.
-                float inputLen = math.length(PlayerInputDir);
-                if (inputLen > 0.01f)
-                {
-                    float projection = math.dot(vel, PlayerInputDir);
-                    if (projection < PlayerInputSpeed)
-                        vel += PlayerInputDir * (PlayerInputSpeed - projection);
-                }
-
                 // Player-specific velocity cap (typically tighter than MaxVelocity)
                 speed = math.length(vel);
                 if (speed > PlayerMaxSpeed)

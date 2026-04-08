@@ -94,15 +94,26 @@ namespace ParticleLife.Simulation
             for (int i = 0; i < particleCount; i++)
                 _typeCounts[types[i]]++;
 
+            // 先找最小值
+            int minCount = int.MaxValue;
+            for (int t = 0; t < typeCount; t++)
+                if (_typeCounts[t] < minCount)
+                    minCount = _typeCounts[t];
+
+            // 统计并随机选取最稀少的 type，避免严格 < 导致低 index 长期独占
+            int candidateCount = 0;
+            for (int t = 0; t < typeCount; t++)
+                if (_typeCounts[t] == minCount)
+                    candidateCount++;
+
+            int pick = _rng.NextInt(0, candidateCount);
             byte spawnType = 0;
-            int  minCount  = int.MaxValue;
+            int  seen      = 0;
             for (int t = 0; t < typeCount; t++)
             {
-                if (_typeCounts[t] < minCount)
-                {
-                    minCount  = _typeCounts[t];
-                    spawnType = (byte)t;
-                }
+                if (_typeCounts[t] != minCount) continue;
+                if (seen == pick) { spawnType = (byte)t; break; }
+                seen++;
             }
 
             // ── Spawn ───────────────────────────────────────────────────────

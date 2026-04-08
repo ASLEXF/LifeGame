@@ -193,7 +193,7 @@ MonoBehaviour:
   _typeCount: 8
   _damping: 0.85
   _maxVelocity: 20
-  _playerInputSpeed: 15
+  _playerInputForce: 150
   _playerMaxSpeed: 25
   _playerResistanceFullAt: 100
   _playerMaxExternalReduction: 0.25
@@ -263,6 +263,7 @@ MonoBehaviour:
   _endScale: 20
   _startAlpha: 0.8
   _rippleMaterial: {fileID: 2100000, guid: 3ddaa447c102ce24bafefa33a05d6b8e, type: 2}
+  _playerTypeOnly: 1
   _typeColors:
   - {r: 0.2, g: 0.6, b: 1, a: 1}
   - {r: 1, g: 0.4, b: 0.2, a: 1}
