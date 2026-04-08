@@ -33,6 +33,10 @@ namespace ParticleLife.Rendering
         [Tooltip("透明无光照材质，需支持 _BaseColor 属性（含 alpha）")]
         [SerializeField] private Material _rippleMaterial;
 
+        [Header("过滤")]
+        [Tooltip("启用后仅对玩家类型粒子生成时触发波纹效果")]
+        [SerializeField] private bool _playerTypeOnly = false;
+
         [Header("颜色（按类型，与 ParticleRenderer 保持一致）")]
         [SerializeField] private Color[] _typeColors = new Color[]
         {
@@ -45,6 +49,8 @@ namespace ParticleLife.Rendering
             new Color(0.20f, 0.90f, 0.90f),  // 6: 青
             new Color(1.00f, 0.70f, 0.20f),  // 7: 金
         };
+
+        private byte _playerType;
 
         private const int MaxRipples = 32;
 
@@ -72,11 +78,21 @@ namespace ParticleLife.Rendering
         }
 
         /// <summary>
+        /// Sets the player particle type. When _playerTypeOnly is enabled, only spawns
+        /// of this type will trigger a ripple. Call from ParticleSimulation after the
+        /// player type is determined.
+        /// </summary>
+        public void SetPlayerType(byte type) => _playerType = type;
+
+        /// <summary>
         /// Activates a ripple at the given world position with the matching type color.
         /// Subscribe this to CellularAutomata.OnParticleSpawned (done by ParticleSimulation).
         /// </summary>
         public void Trigger(float2 position, byte type)
         {
+            Debug.Log($"Received spawn event at {position} for type {type}, playertype {_playerType}");
+            if (_playerTypeOnly && type != _playerType) return;
+            Debug.Log($"Triggering ripple at {position} for type {type}");
             // Find first inactive slot
             for (int i = 0; i < MaxRipples; i++)
             {
