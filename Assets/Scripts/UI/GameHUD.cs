@@ -30,18 +30,29 @@ namespace ParticleLife.UI
         [SerializeField] private TextMeshProUGUI _survivalTimeText;
         [SerializeField] private Slider          _captureSlider;
 
+        [SerializeField] private Slider          _skillSlider;
+
         [Header("引用")]
         [SerializeField] private GameStateManager  _gameState;
         [SerializeField] private PlayerControl     _playerControl;
         [SerializeField] private CaptureDetection  _captureDetection;
         [SerializeField] private ClusterDetector   _clusterDetector;
+        [SerializeField] private PlayerSkill       _playerSkill;
 
         private void Start()
         {
             _gameState.OnStateChanged += OnStateChanged;
-            _captureSlider.minValue = 0f;
-            _captureSlider.maxValue = 1f;
+
+            _captureSlider.minValue    = 0f;
+            _captureSlider.maxValue    = 1f;
             _captureSlider.interactable = false;
+
+            if (_skillSlider != null)
+            {
+                _skillSlider.minValue    = 0f;
+                _skillSlider.maxValue    = 1f;
+                _skillSlider.interactable = false;
+            }
         }
 
         private void OnDestroy()
@@ -64,6 +75,25 @@ namespace ParticleLife.UI
                 ? _captureDetection.CaptureTimer / _captureDetection.CaptureDuration
                 : 0f;
             _captureSlider.value = Mathf.Clamp01(captureFraction);
+
+            if (_skillSlider != null && _playerSkill != null)
+            {
+                float sv;
+                if (_playerSkill.IsShieldActive)
+                    // Active: drains 1 → 0 as time runs out
+                    sv = _playerSkill.ShieldDuration > 0f
+                        ? _playerSkill.ShieldTimeRemaining / _playerSkill.ShieldDuration
+                        : 0f;
+                else if (_playerSkill.CooldownTimeRemaining > 0f)
+                    // Cooldown: fills 0 → 1 as it recharges
+                    sv = _playerSkill.ShieldCooldown > 0f
+                        ? 1f - _playerSkill.CooldownTimeRemaining / _playerSkill.ShieldCooldown
+                        : 0f;
+                else
+                    sv = 1f;   // Ready: full bar
+
+                _skillSlider.value = Mathf.Clamp01(sv);
+            }
         }
 
         // ── State handling ────────────────────────────────────────────────────

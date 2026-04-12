@@ -29,6 +29,8 @@ namespace ParticleLife.Simulation
         private readonly float _densityRadius;
         private readonly int   _densityCap;
         private readonly int[] _typeCounts;   // reused each tick to avoid per-frame allocation
+        private readonly int   _totalTypeCount;
+        private readonly float _specialSpawnChance;
 
         private float _timer;
         private Unity.Mathematics.Random _rng;
@@ -38,18 +40,32 @@ namespace ParticleLife.Simulation
             float densityRadius,
             int   densityCap,
             int   typeCount,
+            int   totalTypeCount,
+            float specialSpawnChance = 0.1f,
             uint  seed = 99999u)
         {
-            _spawnInterval = spawnInterval;
-            _densityRadius = densityRadius;
-            _densityCap    = densityCap;
-            _typeCounts    = new int[typeCount];
-            _rng           = new Unity.Mathematics.Random(seed);
+            _spawnInterval       = spawnInterval;
+            _densityRadius       = densityRadius;
+            _densityCap          = densityCap;
+            _typeCounts          = new int[typeCount];
+            _totalTypeCount      = totalTypeCount;
+            _specialSpawnChance  = specialSpawnChance;
+            _rng                 = new Unity.Mathematics.Random(seed);
         }
 
         /// <summary>
         /// Call each FixedUpdate. Spawns one particle if the interval has elapsed
         /// and the particle cap has not been reached.
+        ///
+        /// When <paramref name="spawnRadiusMin"/> &gt; 0 (unbounded world mode), candidates are
+        /// sampled from an annulus centred on <paramref name="centerPos"/> with radii
+        /// [spawnRadiusMin, spawnRadiusMax] using sqrt-corrected polar sampling for
+        /// uniform area distribution. When spawnRadiusMin ≤ 0 the original
+        /// world-space random fallback is used (bounded mode).
+        ///
+        /// When <paramref name="spawnDirectionBias"/> &gt; 0 and <paramref name="moveDir"/>
+        /// is non-zero, spawn candidates are restricted to a forward-facing sector:
+        /// half-angle = π × (1 − bias). At bias 0.7 the sector is ±54°.
         /// </summary>
         public void Tick(
             NativeArray<float2> positionsRead,
@@ -62,7 +78,12 @@ namespace ParticleLife.Simulation
             int                 maxParticleCount,
             int                 typeCount,
             float               worldHalfX,
-            float               worldHalfY)
+            float               worldHalfY,
+            float2              centerPos,
+            float               spawnRadiusMin,
+            float               spawnRadiusMax,
+            float2              moveDir,
+            float               spawnDirectionBias)
         {
             _timer += Time.fixedDeltaTime;
             if (_timer < _spawnInterval) return;
@@ -76,9 +97,37 @@ namespace ParticleLife.Simulation
 
             for (int s = 0; s < SampleCount; s++)
             {
-                float2 candidate = new float2(
-                    _rng.NextFloat() * (worldHalfX * 2f) - worldHalfX,
-                    _rng.NextFloat() * (worldHalfY * 2f) - worldHalfY);
+                float2 candidate;
+                if (spawnRadiusMin > 0f)
+                {
+                    // Unbounded mode: sample within the spawn annulus.
+                    // sqrt compensates for polar-coordinate area bias (uniform area distribution).
+                    // When a movement direction and bias are provided, the angle is restricted
+                    // to a forward-facing sector: half-angle = π × (1 − bias).
+                    float baseAngle;
+                    if (spawnDirectionBias > 0f && math.lengthsq(moveDir) > 0.001f
+                        && _rng.NextFloat() < spawnDirectionBias)
+                    {
+                        // Biased branch: uniform within forward ±90° hemisphere.
+                        float forwardAngle = math.atan2(moveDir.y, moveDir.x);
+                        baseAngle = forwardAngle + (_rng.NextFloat() * 2f - 1f) * (math.PI * 0.5f);
+                    }
+                    else
+                    {
+                        // Fallback branch (probability 1-bias, or no movement): full circle.
+                        baseAngle = _rng.NextFloat() * math.PI * 2f;
+                    }
+                    float radius = math.sqrt(_rng.NextFloat()) * (spawnRadiusMax - spawnRadiusMin)
+                                   + spawnRadiusMin;
+                    candidate = centerPos + new float2(math.cos(baseAngle), math.sin(baseAngle)) * radius;
+                }
+                else
+                {
+                    // Bounded mode: original world-space random.
+                    candidate = new float2(
+                        _rng.NextFloat() * (worldHalfX * 2f) - worldHalfX,
+                        _rng.NextFloat() * (worldHalfY * 2f) - worldHalfY);
+                }
                 float density = LocalDensity(candidate, positionsRead, particleCount);
                 float weight  = 1f - math.saturate(density / _densityCap);
                 if (weight > 0f && density < lowestDens)
@@ -91,8 +140,10 @@ namespace ParticleLife.Simulation
             // ── Select rarest type to keep populations balanced ─────────────
             for (int t = 0; t < typeCount; t++)
                 _typeCounts[t] = 0;
+            // Skip special-type particles (indices >= typeCount) — CA never spawns them.
             for (int i = 0; i < particleCount; i++)
-                _typeCounts[types[i]]++;
+                if (types[i] < typeCount)
+                    _typeCounts[types[i]]++;
 
             // 先找最小值
             int minCount = int.MaxValue;
@@ -115,6 +166,11 @@ namespace ParticleLife.Simulation
                 if (seen == pick) { spawnType = (byte)t; break; }
                 seen++;
             }
+
+            // ── 特殊类型覆盖（黑/白粒子随机补充）────────────────────────────
+            int specialCount = _totalTypeCount - typeCount;
+            if (specialCount > 0 && _rng.NextFloat() < _specialSpawnChance)
+                spawnType = (byte)(typeCount + _rng.NextInt(0, specialCount));
 
             // ── Spawn ───────────────────────────────────────────────────────
             int newIdx = particleCount;

@@ -90,9 +90,7 @@ namespace ParticleLife.Rendering
         /// </summary>
         public void Trigger(float2 position, byte type)
         {
-            Debug.Log($"Received spawn event at {position} for type {type}, playertype {_playerType}");
             if (_playerTypeOnly && type != _playerType) return;
-            Debug.Log($"Triggering ripple at {position} for type {type}");
             // Find first inactive slot
             for (int i = 0; i < MaxRipples; i++)
             {

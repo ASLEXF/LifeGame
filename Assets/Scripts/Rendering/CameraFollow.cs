@@ -23,8 +23,14 @@ namespace ParticleLife.Rendering
     [RequireComponent(typeof(Camera))]
     public class CameraFollow : MonoBehaviour
     {
+        [Header("无边界模式")]
+        [Tooltip("开启后：orthographicSize 固定为 _unboundedOrthoSize，摄像机完全跟随玩家质心（followStrength = 1）")]
+        [SerializeField] private bool  _unboundedMode      = false;
+        [Tooltip("无边界模式下的正交摄像机尺寸（世界单位）")]
+        [SerializeField] private float _unboundedOrthoSize = 35f;
+
         [Header("跟随设置")]
-        [Tooltip("摄像机偏移强度：0 = 固定居中，1 = 完全跟随。建议 0.1–0.2")]
+        [Tooltip("有界模式下的摄像机偏移强度：0 = 固定居中，1 = 完全跟随。建议 0.1–0.2")]
         [SerializeField][Range(0f, 1f)] private float _followStrength = 0.15f;
 
         [Tooltip("摄像机平滑时间（秒）")]
@@ -61,9 +67,10 @@ namespace ParticleLife.Rendering
             if (_playerControl != null && _playerControl.IsAssigned
                 && _playerControl.PlayerParticleCount > 0)
             {
-                float2 centroid = _playerControl.ClusterCentroid;
-                targetPos.x = centroid.x * _followStrength;
-                targetPos.y = centroid.y * _followStrength;
+                float2 centroid  = _playerControl.ClusterCentroid;
+                float  strength  = _unboundedMode ? 1f : _followStrength;
+                targetPos.x = centroid.x * strength;
+                targetPos.y = centroid.y * strength;
             }
 
             transform.position = Vector3.SmoothDamp(
@@ -81,7 +88,7 @@ namespace ParticleLife.Rendering
 
             if (_camera == null || _simulation == null) return;
 
-            _camera.orthographicSize = _simulation.WorldHalfY;
+            _camera.orthographicSize = _unboundedMode ? _unboundedOrthoSize : _simulation.WorldHalfY;
         }
     }
 }

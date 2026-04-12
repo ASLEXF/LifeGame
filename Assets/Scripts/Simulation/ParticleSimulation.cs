@@ -40,6 +40,10 @@ namespace ParticleLife.Simulation
         [SerializeField] private float _damping     = 0.85f;
         [SerializeField] private float _maxVelocity = 20f;
 
+        [Header("全局力缩放")]
+        [Tooltip("实时调整所有粒子间引力/斥力的全局倍数。\n1 = 默认，0 = 无力场（纯惯性运动），2 = 翻倍。\n不影响玩家输入力和边界斥力。")]
+        [SerializeField] private float _forceScale = 1f;
+
         // Idle tracking threshold — not exposed; value doesn't affect any gameplay decision.
         private const float IdleVelocityThreshold = 0.5f;
 
@@ -54,6 +58,8 @@ namespace ParticleLife.Simulation
         [SerializeField][Range(0f, 1f)] private float _playerMaxExternalReduction = 0.75f;
 
         [Header("边界碰撞")]
+        [Tooltip("关闭时粒子可自由飞出世界矩形，边界反弹和斥力场均禁用；边界参数保留供回退调试")]
+        [SerializeField] private bool _unboundedWorld = false;
         [Tooltip("粒子碰撞边界时反弹速度的保留比例（0 = 完全吸收，1 = 完全弹性）")]
         [SerializeField][Range(0f, 1f)] private float _bounceRestitution  = 0.3f;
 
@@ -62,10 +68,35 @@ namespace ParticleLife.Simulation
         [Tooltip("斥力场强度系数")]
         [SerializeField] private float _boundaryStrength  = 50f;
 
+        [Header("特殊粒子")]
+        [Tooltip("游戏开始时生成的黑色粒子数量（仅与同类聚集，与其他类型零交互）")]
+        [SerializeField] private int _initialBlackCount = 50;
+        [Tooltip("游戏开始时生成的白色粒子数量（对所有非黑粒子有吸引力）")]
+        [SerializeField] private int _initialWhiteCount = 30;
+
+        [Header("粒子半径（按类型）")]
+        [Tooltip("长度必须为 10（最多 8 种普通粒子 + 2 种特殊粒子）。\n" +
+                 "索引 0–7：普通类型（仅前 TypeCount 个生效）。\n" +
+                 "索引 8：黑色粒子半径。索引 9：白色粒子半径。\n" +
+                 "留空则使用默认值：普通类型 0.2，黑色 0.35，白色 0.30。")]
+        [SerializeField] private float[] _typeRadii;
+
         [Header("细胞自动机参数")]
         [SerializeField] private float _spawnInterval = 0.5f;
         [SerializeField] private float _densityRadius  = 5f;
         [SerializeField] private int   _densityCap     = 10;
+
+        [Header("无边界世界 — 生成半径")]
+        [Tooltip("无边界模式下生成环的最小半径（世界单位）。建议 = 摄像机 orthoSize × 1.4")]
+        [SerializeField] private float _spawnRadiusMin = 49f;
+        [Tooltip("无边界模式下生成环的最大半径（世界单位）。建议 = 摄像机 orthoSize × 1.8")]
+        [SerializeField] private float _spawnRadiusMax = 63f;
+        [Tooltip("距玩家质心超过此距离的非玩家粒子将被传送复用（世界单位）。建议 = 摄像机 orthoSize × 3")]
+        [SerializeField] private float _despawnRadius  = 105f;
+        [Tooltip("生成方向偏向强度：0 = 全圆均匀，1 = 正前方；推荐 0.6–0.8")]
+        [SerializeField][Range(0f, 1f)] private float _spawnDirectionBias = 0.7f;
+        [Tooltip("计算平滑前进方向所用的历史窗口（秒）；历史不足时退化为实时输入方向")]
+        [SerializeField] private float _spawnDirWindowSec = 2f;
 
         [Header("引力矩阵初始配置")]
         [Tooltip("TypeCount×TypeCount 个条目，按 typeA * TypeCount + typeB 排列。\n" +
@@ -82,8 +113,10 @@ namespace ParticleLife.Simulation
         private NativeArray<float2> _velocities;
         private NativeArray<byte>   _types;
         private NativeArray<bool>   _isPlayerOwned;
+        private NativeArray<bool>   _isInPlayerCluster;
         private NativeArray<float>  _idleTime;
         private NativeArray<float2> _externalForceOnPlayer;
+        private NativeArray<float>  _typeRadiiNative;
 
         private int _particleCount;
 
@@ -92,9 +125,25 @@ namespace ParticleLife.Simulation
         private NativeParallelMultiHashMap<int2, int> _grid;
         private CellularAutomata                      _cellularAutomata;
 
+        // ── Spawn direction smoothing ─────────────────────────────────────────
+        private struct CentroidSample { public float2 Position; public float Time; }
+        // Pre-allocated to 256 slots: 60 fps × 2.2 s ≈ 132 entries, no resizing needed.
+        private readonly System.Collections.Generic.Queue<CentroidSample> _centroidHistory
+            = new(256);
+
+        // ── Cull & respawn (unbounded mode) ──────────────────────────────────
+        private int   _cullFrameCounter;
+        private const int CullEveryNFrames = 30;
+        private Unity.Mathematics.Random _cullRng;
+        private int[] _cullTypeCounts;   // allocated in Awake; reused each cull batch
+
         // ── Job tracking ──────────────────────────────────────────────────────
         private JobHandle _pendingHandle;
         private bool      _jobPending;
+
+        // ── Skill state ───────────────────────────────────────────────────────
+        private bool  _shieldActive;
+        private float _shieldPlayerRepulsionScale = 1f;
 
         // ── Runtime matrix editing ────────────────────────────────────────────
         private bool _cellSizeDirty;
@@ -121,18 +170,23 @@ namespace ParticleLife.Simulation
             _velocities            = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
             _types                 = new NativeArray<byte>  (_maxParticleCount, Allocator.Persistent);
             _isPlayerOwned         = new NativeArray<bool>  (_maxParticleCount, Allocator.Persistent);
+            _isInPlayerCluster     = new NativeArray<bool>  (_maxParticleCount, Allocator.Persistent);
             _idleTime              = new NativeArray<float> (_maxParticleCount, Allocator.Persistent);
             _externalForceOnPlayer = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
 
             _gravityMatrix = GravityMatrix.CreateDefault(_typeCount, Allocator.Persistent);
 
-            // Override with Inspector-configured values when the array is fully populated.
+            // Override normal-type entries with Inspector-configured values when fully populated.
+            // Special type entries (black/white) are always hardcoded; Inspector config covers only
+            // the normal _typeCount × _typeCount sub-matrix.
             if (_gravityMatrixConfig != null && _gravityMatrixConfig.Length == _typeCount * _typeCount)
             {
                 for (int a = 0; a < _typeCount; a++)
                 for (int b = 0; b < _typeCount; b++)
                     _gravityMatrix.Set(a, b, _gravityMatrixConfig[a * _typeCount + b]);
             }
+
+            _renderer.SetNormalTypeCount(_typeCount);
 
             _worldHalfY = _worldHeight * 0.5f;
             _worldHalfX = _worldHalfY * ((float)Screen.width / Screen.height);
@@ -141,9 +195,49 @@ namespace ParticleLife.Simulation
             int gridCapacity = _maxParticleCount * 4;
             _grid = new NativeParallelMultiHashMap<int2, int>(gridCapacity, Allocator.Persistent);
 
-            _cellularAutomata = new CellularAutomata(_spawnInterval, _densityRadius, _densityCap, _typeCount);
+            _cellularAutomata = new CellularAutomata(_spawnInterval, _densityRadius, _densityCap, _typeCount, _gravityMatrix.TypeCount);
             if (_spawnRipple != null)
                 _cellularAutomata.OnParticleSpawned += _spawnRipple.Trigger;
+
+            _cullRng        = new Unity.Mathematics.Random(54321u);
+            _cullTypeCounts = new int[_typeCount];
+
+            // 初始化各类型粒子半径
+            // Inspector 数组固定长度 10：[0..7] 普通类型，[8] 黑色，[9] 白色
+            const int RadiiArrayLength = 10;
+            int totalTypes = _gravityMatrix.TypeCount;
+            _typeRadiiNative = new NativeArray<float>(totalTypes, Allocator.Persistent);
+            if (_typeRadii != null && _typeRadii.Length == RadiiArrayLength)
+            {
+                for (int i = 0; i < _typeCount; i++)
+                    _typeRadiiNative[i] = Mathf.Max(_typeRadii[i], 0.01f);
+                if (totalTypes > _typeCount)
+                    _typeRadiiNative[_typeCount]     = Mathf.Max(_typeRadii[8], 0.01f); // 黑色固定在 [8]
+                if (totalTypes > _typeCount + 1)
+                    _typeRadiiNative[_typeCount + 1] = Mathf.Max(_typeRadii[9], 0.01f); // 白色固定在 [9]
+            }
+            else
+            {
+                for (int i = 0; i < _typeCount; i++)
+                    _typeRadiiNative[i] = 0.2f;
+                if (totalTypes > _typeCount)
+                    _typeRadiiNative[_typeCount]     = 0.35f; // 黑色默认
+                if (totalTypes > _typeCount + 1)
+                    _typeRadiiNative[_typeCount + 1] = 0.30f; // 白色默认
+            }
+
+            // 按粒子半径比例调整引力矩阵，使不同尺寸粒子的表面间距保持不变
+            // 参考半径 0.2（默认普通粒子）：pair 合并半径 / (2×参考) 得缩放比
+            const float r_ref = 0.2f;
+            for (int a = 0; a < _gravityMatrix.TypeCount; a++)
+            for (int b = 0; b < _gravityMatrix.TypeCount; b++)
+            {
+                float scale = (_typeRadiiNative[a] + _typeRadiiNative[b]) / (2f * r_ref);
+                var   entry = _gravityMatrix.Get(a, b);
+                entry.AttractionStrength *= scale;
+                entry.RepulsionStrength  *= scale;
+                _gravityMatrix.Set(a, b, entry);
+            }
 
             SpawnInitialParticles();
         }
@@ -164,7 +258,9 @@ namespace ParticleLife.Simulation
                 _cellSizeDirty = false;
             }
 
-            // Cellular automata runs on main thread (reads positionsRead)
+            // Cellular automata runs on main thread (reads positionsRead).
+            // In unbounded mode candidates are sampled from the spawn annulus around the
+            // player centroid; in bounded mode the original world-space random is used.
             _cellularAutomata.Tick(
                 _positionsRead,
                 _positionsWrite,
@@ -176,7 +272,19 @@ namespace ParticleLife.Simulation
                 _maxParticleCount,
                 _typeCount,
                 _worldHalfX,
-                _worldHalfY);
+                _worldHalfY,
+                _playerCentroid,
+                _unboundedWorld ? _spawnRadiusMin : 0f,
+                _unboundedWorld ? _spawnRadiusMax : 0f,
+                _unboundedWorld ? ComputeSmoothedMoveDir(_playerInputDir) : float2.zero,
+                _unboundedWorld ? _spawnDirectionBias : 0f);
+
+            // Unbounded mode: teleport distant non-player particles back into the spawn ring.
+            // Runs every CullEveryNFrames to amortise the O(N) scan cost.
+            if (_unboundedWorld && ++_cullFrameCounter % CullEveryNFrames == 0)
+                CullAndRespawn(_playerCentroid,
+                               ComputeSmoothedMoveDir(_playerInputDir),
+                               _spawnDirectionBias);
 
             if (_particleCount <= 0) return;
 
@@ -195,7 +303,7 @@ namespace ParticleLife.Simulation
                 IdleTime                   = _idleTime,
                 Grid                       = _grid,
                 MatrixEntries              = _gravityMatrix.Entries,
-                TypeCount                  = _typeCount,
+                TypeCount                  = _gravityMatrix.TypeCount,
                 CellSize                   = _cellSize,
                 DeltaTime                  = Time.fixedDeltaTime,
                 Damping                    = _damping,
@@ -213,6 +321,11 @@ namespace ParticleLife.Simulation
                 PlayerResistanceFullAt     = _playerResistanceFullAt,
                 PlayerMaxExternalReduction = _playerMaxExternalReduction,
                 ExternalForceOnPlayer      = _externalForceOnPlayer,
+                IsInPlayerCluster          = _isInPlayerCluster,
+                ForceScale                 = _forceScale,
+                UnboundedWorld             = _unboundedWorld,
+                ShieldActive               = _shieldActive,
+                ShieldPlayerRepulsionScale = _shieldPlayerRepulsionScale,
             };
 
             _pendingHandle = physicsJob.Schedule(_particleCount, 64, gridHandle);
@@ -232,7 +345,7 @@ namespace ParticleLife.Simulation
 
             if (_particleCount > 0)
             {
-                _renderer.Render(_positionsRead, _types, _isPlayerOwned, _particleCount);
+                _renderer.Render(_positionsRead, _types, _isPlayerOwned, _particleCount, _typeRadiiNative);
             }
         }
 
@@ -250,8 +363,10 @@ namespace ParticleLife.Simulation
             _velocities           .Dispose();
             _types                .Dispose();
             _isPlayerOwned        .Dispose();
+            _isInPlayerCluster    .Dispose();
             _idleTime             .Dispose();
             _externalForceOnPlayer.Dispose();
+            _typeRadiiNative      .Dispose();
             _gravityMatrix        .Dispose();
             _grid                 .Dispose();
         }
@@ -260,10 +375,11 @@ namespace ParticleLife.Simulation
 
         private void SpawnInitialParticles()
         {
-            var rng   = new Unity.Mathematics.Random(12345u);
-            int count = Mathf.Min(_initialCount, _maxParticleCount);
+            var rng        = new Unity.Mathematics.Random(12345u);
+            int normalCount = Mathf.Min(_initialCount, _maxParticleCount);
 
-            for (int i = 0; i < count; i++)
+            // Normal types — cyclic assignment keeps populations perfectly balanced.
+            for (int i = 0; i < normalCount; i++)
             {
                 var pos = new float2(
                     rng.NextFloat() * (_worldHalfX * 2f) - _worldHalfX,
@@ -271,32 +387,69 @@ namespace ParticleLife.Simulation
                 _positionsRead[i]  = pos;
                 _positionsWrite[i] = pos;
                 _velocities[i]     = float2.zero;
-                // 轮转分配保证每种 type 数量完全相等（误差 ≤ 1），
-                // 避免随机 seed 导致某些 type 初始偏多、CA 永远无法补到。
                 _types[i]          = (byte)(i % _typeCount);
                 _isPlayerOwned[i]  = false;
                 _idleTime[i]       = 0f;
             }
+            _particleCount = normalCount;
 
-            _particleCount = count;
+            // Special types appended after normal particles.
+            byte blackType  = (byte)_typeCount;
+            byte whiteType  = (byte)(_typeCount + 1);
+
+            int blackCount = Mathf.Min(_initialBlackCount, _maxParticleCount - _particleCount);
+            for (int i = 0; i < blackCount; i++)
+            {
+                int idx = _particleCount + i;
+                var pos = new float2(
+                    rng.NextFloat() * (_worldHalfX * 2f) - _worldHalfX,
+                    rng.NextFloat() * (_worldHalfY * 2f) - _worldHalfY);
+                _positionsRead[idx]  = pos;
+                _positionsWrite[idx] = pos;
+                _velocities[idx]     = float2.zero;
+                _types[idx]          = blackType;
+                _isPlayerOwned[idx]  = false;
+                _idleTime[idx]       = 0f;
+            }
+            _particleCount += blackCount;
+
+            int whiteCount = Mathf.Min(_initialWhiteCount, _maxParticleCount - _particleCount);
+            for (int i = 0; i < whiteCount; i++)
+            {
+                int idx = _particleCount + i;
+                var pos = new float2(
+                    rng.NextFloat() * (_worldHalfX * 2f) - _worldHalfX,
+                    rng.NextFloat() * (_worldHalfY * 2f) - _worldHalfY);
+                _positionsRead[idx]  = pos;
+                _positionsWrite[idx] = pos;
+                _velocities[idx]     = float2.zero;
+                _types[idx]          = whiteType;
+                _isPlayerOwned[idx]  = false;
+                _idleTime[idx]       = 0f;
+            }
+            _particleCount += whiteCount;
         }
 
         // ── Player input state ────────────────────────────────────────────────
         // _playerInputDir: normalised direction set by PlayerControl each frame.
         // _playerParticleCount: cluster size, used for resistance scaling in the job.
+        // _playerCentroid: world-space centroid, forwarded to CellularAutomata for ring spawning.
         // PlayerInputForce is kept for CaptureDetection (magnitude ≈ effective push).
         private float2 _playerInputDir;
         private int    _playerParticleCount;
+        private float2 _playerCentroid;
 
         /// <summary>
-        /// Sets the normalised movement direction and current cluster size for the
-        /// next FixedUpdate. Call every LateUpdate from PlayerControl.
-        /// Pass float2.zero when no input is active.
+        /// Sets the normalised movement direction, cluster size, and world-space centroid
+        /// for the next FixedUpdate. Call every LateUpdate from PlayerControl.
+        /// Pass float2.zero for normalisedDir and centroid when no input is active.
         /// </summary>
-        public void SetPlayerInput(float2 normalisedDir, int clusterSize)
+        public void SetPlayerInput(float2 normalisedDir, int clusterSize, float2 centroid)
         {
             _playerInputDir      = normalisedDir;
             _playerParticleCount = clusterSize;
+            _playerCentroid      = centroid;
+            RecordCentroid(centroid);
         }
 
         /// <summary>
@@ -325,8 +478,11 @@ namespace ParticleLife.Simulation
             OnGravityMatrixChanged?.Invoke();
         }
 
-        /// <summary>Number of particle types in the gravity matrix.</summary>
+        /// <summary>Number of configurable (normal) particle types. Does NOT include black/white special types.</summary>
         public int TypeCount => _typeCount;
+
+        /// <summary>Total particle type count including the 2 special types (black + white).</summary>
+        public int TotalTypeCount => _gravityMatrix.TypeCount;
 
         // ── Public accessors (for PlayerControl, HUD, etc.) ──────────────────
 
@@ -370,6 +526,24 @@ namespace ParticleLife.Simulation
         /// <summary>Maximum particle capacity. Use to allocate companion NativeArrays at the same size.</summary>
         public int MaxParticleCount => _maxParticleCount;
 
+        /// <summary>Per-type visual radii (world units). Index matches particle type byte, including special types.</summary>
+        public NativeArray<float> TypeRadii => _typeRadiiNative;
+
+        /// <summary>True when boundary bounce and repulsion are disabled (unbounded world mode).</summary>
+        public bool UnboundedWorld => _unboundedWorld;
+
+        /// <summary>
+        /// Activates or deactivates the gravity shield. While active, external forces on
+        /// player-owned particles are zeroed in PhysicsJob. Called by PlayerSkill.
+        /// <paramref name="playerRepulsionScale"/> multiplies repulsion between player-owned
+        /// particles; pass 1 (default) when deactivating.
+        /// </summary>
+        public void SetShieldActive(bool active, float playerRepulsionScale = 1f)
+        {
+            _shieldActive               = active;
+            _shieldPlayerRepulsionScale = active ? playerRepulsionScale : 1f;
+        }
+
         /// <summary>
         /// Resets all particle state and re-spawns the initial population.
         /// Call before GameStateManager.RestartSession() to ensure a clean slate.
@@ -389,6 +563,7 @@ namespace ParticleLife.Simulation
                 _velocities[i]            = float2.zero;
                 _types[i]                 = 0;
                 _isPlayerOwned[i]         = false;
+                _isInPlayerCluster[i]     = false;
                 _idleTime[i]              = 0f;
                 _externalForceOnPlayer[i] = float2.zero;
             }
@@ -407,6 +582,144 @@ namespace ParticleLife.Simulation
         {
             if ((uint)index < (uint)_particleCount)
                 _isPlayerOwned[index] = owned;
+        }
+
+        /// <summary>
+        /// Marks a particle as part of the player's visual cluster for input-force purposes.
+        /// Called by PlayerControl.MarkPlayerCluster() each LateUpdate.
+        /// </summary>
+        public void SetInPlayerCluster(int index, bool inCluster)
+        {
+            if ((uint)index < (uint)_particleCount)
+                _isInPlayerCluster[index] = inCluster;
+        }
+
+        /// <summary>
+        /// Clears all cluster membership flags. Call before re-marking each frame.
+        /// </summary>
+        public void ClearPlayerClusterFlags()
+        {
+            for (int i = 0; i < _particleCount; i++)
+                _isInPlayerCluster[i] = false;
+        }
+
+        /// <summary>Read-only view of cluster membership flags (valid after PlayerControl LateUpdate).</summary>
+        public NativeArray<bool> IsInPlayerCluster => _isInPlayerCluster;
+
+        // ── Spawn direction smoothing ─────────────────────────────────────────
+
+        /// <summary>
+        /// Appends the current centroid to the history queue and prunes entries
+        /// older than 1.1 × _spawnDirWindowSec so the oldest surviving entry
+        /// approximates _spawnDirWindowSec ago.
+        /// </summary>
+        private void RecordCentroid(float2 centroid)
+        {
+            float now = Time.time;
+            _centroidHistory.Enqueue(new CentroidSample { Position = centroid, Time = now });
+
+            float pruneAge = now - _spawnDirWindowSec * 1.1f;
+            while (_centroidHistory.Count > 1 && _centroidHistory.Peek().Time < pruneAge)
+                _centroidHistory.Dequeue();
+        }
+
+        /// <summary>
+        /// Returns the net-displacement direction over the configured history window.
+        /// Falls back to <paramref name="fallback"/> (real-time input direction) when
+        /// less than 80 % of the window has been recorded.
+        /// Returns float2.zero when the player is stationary (no bias → full-circle spawn).
+        /// </summary>
+        private float2 ComputeSmoothedMoveDir(float2 fallback)
+        {
+            if (_centroidHistory.Count < 2) return Normalized(fallback);
+
+            var   oldest  = _centroidHistory.Peek();
+            float elapsed = Time.time - oldest.Time;
+
+            if (elapsed < _spawnDirWindowSec * 0.8f)
+                return Normalized(fallback);   // not enough history → real-time direction
+
+            float2 delta = _playerCentroid - oldest.Position;
+            float  dsq   = math.lengthsq(delta);
+            return dsq > 0.0001f ? math.normalize(delta) : float2.zero;
+        }
+
+        private static float2 Normalized(float2 v)
+        {
+            float dsq = math.lengthsq(v);
+            return dsq > 0.001f ? v * math.rsqrt(dsq) : float2.zero;
+        }
+
+        // ── Cull & respawn ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Teleports non-player particles that are farther than _despawnRadius from
+        /// <paramref name="center"/> into the spawn annulus [_spawnRadiusMin, _spawnRadiusMax].
+        /// Type distribution is re-balanced across the entire batch in a single O(N) pass.
+        /// Safe to call on the main thread: the pending physics job is always completed
+        /// before FixedUpdate modifies any NativeArray.
+        /// </summary>
+        private void CullAndRespawn(float2 center, float2 moveDir, float directionBias)
+        {
+            float despawnR2 = _despawnRadius * _despawnRadius;
+
+            // Precompute forward direction once; bias probability applied per-particle.
+            bool  useBias      = directionBias > 0f && math.lengthsq(moveDir) > 0.001f;
+            float forwardAngle = useBias ? math.atan2(moveDir.y, moveDir.x) : 0f;
+
+            // Count current type distribution once for the whole batch.
+            for (int t = 0; t < _typeCount; t++) _cullTypeCounts[t] = 0;
+            for (int i = 0; i < _particleCount; i++)
+                if (_types[i] < _typeCount)
+                    _cullTypeCounts[_types[i]]++;
+
+            for (int i = 0; i < _particleCount; i++)
+            {
+                if (_isPlayerOwned[i]) continue;
+                if (math.distancesq(_positionsRead[i], center) <= despawnR2) continue;
+
+                byte  newType = PickRarestType();
+                // Mixture distribution: with probability directionBias spawn in forward
+                // ±90° hemisphere; otherwise full circle. All directions stay populated.
+                float angle = useBias && _cullRng.NextFloat() < directionBias
+                    ? forwardAngle + (_cullRng.NextFloat() * 2f - 1f) * (math.PI * 0.5f)
+                    : _cullRng.NextFloat() * math.PI * 2f;
+                float  radius  = _spawnRadiusMin + _cullRng.NextFloat() * (_spawnRadiusMax - _spawnRadiusMin);
+                float2 newPos  = center + new float2(math.cos(angle), math.sin(angle)) * radius;
+
+                _positionsRead[i]  = newPos;
+                _positionsWrite[i] = newPos;
+                _velocities[i]     = float2.zero;
+                _types[i]          = newType;
+                _idleTime[i]       = 0f;
+
+                _cullTypeCounts[newType]++;   // keep distribution balanced within the batch
+            }
+        }
+
+        /// <summary>
+        /// Returns the normal type (index &lt; _typeCount) with the lowest current count
+        /// according to _cullTypeCounts. Breaks ties randomly.
+        /// </summary>
+        private byte PickRarestType()
+        {
+            int minCount = int.MaxValue;
+            for (int t = 0; t < _typeCount; t++)
+                if (_cullTypeCounts[t] < minCount) minCount = _cullTypeCounts[t];
+
+            int candidates = 0;
+            for (int t = 0; t < _typeCount; t++)
+                if (_cullTypeCounts[t] == minCount) candidates++;
+
+            int pick = _cullRng.NextInt(0, candidates);
+            int seen = 0;
+            for (int t = 0; t < _typeCount; t++)
+            {
+                if (_cullTypeCounts[t] != minCount) continue;
+                if (seen == pick) return (byte)t;
+                seen++;
+            }
+            return 0;
         }
 
         // ── Editor helpers ────────────────────────────────────────────────────

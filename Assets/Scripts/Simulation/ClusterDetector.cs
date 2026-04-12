@@ -22,6 +22,13 @@ namespace ParticleLife.Simulation
     {
         [SerializeField] private ParticleSimulation _simulation;
 
+        [Tooltip("每隔几帧执行一次 BFS。团簇成员关系变化慢，无需每帧重算。")]
+        [SerializeField] private int _detectEveryNFrames = 3;
+
+        private NativeArray<bool>    _isInCluster;
+        private NativeQueue<int>     _bfsQueue;
+        private int                  _frameCounter;
+
         /// <summary>Number of particles in the player cluster this frame (player-owned + reachable neighbours).</summary>
         public int ClusterParticleCount { get; private set; }
 
@@ -29,9 +36,7 @@ namespace ParticleLife.Simulation
         /// Per-particle cluster membership flag. True for every particle that belongs to the player cluster.
         /// Valid after this component's LateUpdate (ExecutionOrder = 5).
         /// </summary>
-        private NativeArray<bool> _isInCluster;
         public NativeArray<bool> IsInCluster => _isInCluster;
-
 
         private void Awake()
         {
@@ -39,17 +44,19 @@ namespace ParticleLife.Simulation
                 _simulation = GetComponent<ParticleSimulation>();
 
             _isInCluster = new NativeArray<bool>(_simulation.MaxParticleCount, Allocator.Persistent);
+            _bfsQueue    = new NativeQueue<int>(Allocator.Persistent);
         }
 
         private void LateUpdate()
         {
-            Detect();
+            if (_frameCounter++ % _detectEveryNFrames == 0)
+                Detect();
         }
 
         private void OnDestroy()
         {
-            if (_isInCluster.IsCreated)
-                _isInCluster.Dispose();
+            if (_isInCluster.IsCreated) _isInCluster.Dispose();
+            if (_bfsQueue.IsCreated)    _bfsQueue.Dispose();
         }
 
         // ── BFS flood-fill ────────────────────────────────────────────────────
@@ -72,7 +79,8 @@ namespace ParticleLife.Simulation
             for (int i = 0; i < count; i++)
                 _isInCluster[i] = false;
 
-            var queue = new NativeQueue<int>(Allocator.Temp);
+            NativeQueue<int> queue = _bfsQueue;
+            queue.Clear();
             int clusterCount = 0;
 
             // Seed: all player-owned particles
@@ -113,7 +121,6 @@ namespace ParticleLife.Simulation
             }
 
             ClusterParticleCount = clusterCount;
-            queue.Dispose();
         }
     }
 }

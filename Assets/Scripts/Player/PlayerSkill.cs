@@ -1,0 +1,86 @@
+using ParticleLife.Input;
+using ParticleLife.Simulation;
+using UnityEngine;
+
+namespace ParticleLife.Player
+{
+    /// <summary>
+    /// Manages the gravity-shield skill activated by the F key.
+    ///
+    /// State machine:
+    ///   Ready    → [F pressed]  → Active   (shield on, duration countdown)
+    ///   Active   → [time up]    → Cooldown (shield off, cooldown countdown)
+    ///   Cooldown → [time up]    → Ready
+    ///
+    /// Exposes IsShieldActive, ShieldTimeRemaining, CooldownTimeRemaining
+    /// for the HUD (S4-07) to read.
+    ///
+    /// Attach to the same GameObject as PlayerControl and ParticleSimulation.
+    /// </summary>
+    public class PlayerSkill : MonoBehaviour
+    {
+        [Header("技能参数")]
+        [Tooltip("引力屏蔽持续时间（秒）")]
+        [SerializeField] private float _shieldDuration = 4f;
+        [Tooltip("技能冷却时间（秒）")]
+        [SerializeField] private float _shieldCooldown = 15f;
+        [Tooltip("技能激活时玩家粒子间斥力的倍数。值越大，扩散越明显。")]
+        [SerializeField] private float _shieldPlayerRepulsionScale = 5f;
+
+        [Header("引用")]
+        [SerializeField] private GameInput          _input;
+        [SerializeField] private ParticleSimulation _simulation;
+
+        /// <summary>True while the shield is active.</summary>
+        public bool  IsShieldActive        { get; private set; }
+        /// <summary>Seconds remaining in the active window. Zero when not active.</summary>
+        public float ShieldTimeRemaining   { get; private set; }
+        /// <summary>Seconds remaining on cooldown. Zero when ready or active.</summary>
+        public float CooldownTimeRemaining { get; private set; }
+        /// <summary>Configured shield duration (seconds). Used by HUD to normalise the slider.</summary>
+        public float ShieldDuration        => _shieldDuration;
+        /// <summary>Configured cooldown duration (seconds). Used by HUD to normalise the slider.</summary>
+        public float ShieldCooldown        => _shieldCooldown;
+
+        private enum ShieldState { Ready, Active, Cooldown }
+        private ShieldState _state = ShieldState.Ready;
+
+        private void Update()
+        {
+            switch (_state)
+            {
+                case ShieldState.Active:
+                    ShieldTimeRemaining -= Time.deltaTime;
+                    if (ShieldTimeRemaining <= 0f)
+                        Deactivate();
+                    break;
+
+                case ShieldState.Cooldown:
+                    CooldownTimeRemaining -= Time.deltaTime;
+                    if (CooldownTimeRemaining <= 0f)
+                        _state = ShieldState.Ready;
+                    break;
+            }
+
+            if (_state == ShieldState.Ready && _input != null && _input.ShieldPressed)
+                Activate();
+        }
+
+        private void Activate()
+        {
+            _state              = ShieldState.Active;
+            IsShieldActive      = true;
+            ShieldTimeRemaining = _shieldDuration;
+            _simulation.SetShieldActive(true, _shieldPlayerRepulsionScale);
+        }
+
+        private void Deactivate()
+        {
+            _state                = ShieldState.Cooldown;
+            IsShieldActive        = false;
+            CooldownTimeRemaining = _shieldCooldown;
+            ShieldTimeRemaining   = 0f;
+            _simulation.SetShieldActive(false);
+        }
+    }
+}

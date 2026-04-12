@@ -52,21 +52,46 @@ namespace ParticleLife.Physics
         /// <summary>Maximum fraction of external force that can be cancelled (0–1). Default 0.75.</summary>
         [ReadOnly] public float  PlayerMaxExternalReduction;
 
+        /// <summary>Global multiplier applied to all particle-particle attraction and repulsion forces.</summary>
+        [ReadOnly] public float  ForceScale;
+
+        /// <summary>When true, boundary repulsion field and hard-clamp bounce are both disabled.</summary>
+        public bool UnboundedWorld;
+
+        /// <summary>
+        /// Multiplier applied to repulsion between player-owned particles while the shield is active.
+        /// Values > 1 cause owned particles to spread apart. Default 5.
+        /// </summary>
+        [ReadOnly] public float ShieldPlayerRepulsionScale;
+
+        /// <summary>
+        /// When true, external forces on player-owned particles are zeroed before force integration.
+        /// This makes player particles immune to gravity from non-player particles for the duration.
+        /// </summary>
+        public bool ShieldActive;
+
         // ── Outputs ─────────────────────────────────────────────────────────
         [WriteOnly] public NativeArray<float2> PositionsWrite;
         [NativeDisableParallelForRestriction] public NativeArray<float2> Velocities;
         [NativeDisableParallelForRestriction] public NativeArray<float>  IdleTime;
         [ReadOnly]  public NativeArray<bool>   IsPlayerOwned;
+        /// <summary>
+        /// Superset of IsPlayerOwned: includes player-owned particles AND non-owned particles
+        /// within _connectionRadius of any player-owned particle. Used for input-force injection
+        /// so the entire visual cluster responds to player input, not just owned particles.
+        /// </summary>
+        [ReadOnly]  public NativeArray<bool>   IsInPlayerCluster;
         [WriteOnly] public NativeArray<float2> ExternalForceOnPlayer;
 
         public void Execute(int i)
         {
-            float2 pos      = PositionsRead[i];
-            float2 vel      = Velocities[i];
-            byte   typeA    = Types[i];
-            float2 force    = float2.zero;
-            bool   isPlayer = IsPlayerOwned[i];
-            float2 extForce = float2.zero;
+            float2 pos       = PositionsRead[i];
+            float2 vel       = Velocities[i];
+            byte   typeA     = Types[i];
+            float2 force     = float2.zero;
+            bool   isPlayer  = IsPlayerOwned[i];
+            bool   inCluster = IsInPlayerCluster[i];
+            float2 extForce  = float2.zero;
 
             int2 cell = new int2(
                 (int)math.floor(pos.x / CellSize),
@@ -104,7 +129,10 @@ namespace ParticleLife.Physics
                     else
                     {
                         float t = dist / threshold;
-                        f = -dir * (entry.RepulsionStrength * (1f - t) / (t + 0.05f));
+                        float repulsion = entry.RepulsionStrength;
+                        if (ShieldActive && isPlayer && IsPlayerOwned[j])
+                            repulsion *= ShieldPlayerRepulsionScale;
+                        f = -dir * (repulsion * (1f - t) / (t + 0.05f));
                     }
 
                     force += f;
@@ -115,12 +143,26 @@ namespace ParticleLife.Physics
                 while (Grid.TryGetNextValue(out j, ref it));
             }
 
+            // 全局力缩放（仅粒子间引力/斥力，不影响玩家输入和边界力）
+            force    *= ForceScale;
+            extForce *= ForceScale;
+
+            // Shield active: strip external forces from the total force accumulator before
+            // zeroing the tracker. Simply zeroing extForce leaves the already-accumulated
+            // external contribution inside `force` untouched.
+            if (ShieldActive && isPlayer)
+            {
+                force   -= extForce;   // remove external-particle contribution from total
+                extForce = float2.zero;
+            }
+
             ExternalForceOnPlayer[i] = isPlayer ? extForce : float2.zero;
 
             // ── Player input force injection ───────────────────────────────
-            // Adds a directed force that competes with gravity naturally.
-            // In strong gravitational wells the player moves slower; in open space faster.
-            if (isPlayer && math.length(PlayerInputDir) > 0.01f)
+            // Applied to the entire visual cluster (IsInPlayerCluster), not just owned particles.
+            // This makes the whole cluster respond cohesively to input rather than only the
+            // owned core particles being pushed. Resistance and ExternalForce stay on IsPlayerOwned.
+            if (inCluster && math.length(PlayerInputDir) > 0.01f)
                 force += PlayerInputDir * PlayerInputForce;
 
             // ── Player external-force resistance ───────────────────────────
@@ -135,7 +177,7 @@ namespace ParticleLife.Physics
             }
 
             // ── Boundary repulsion field ───────────────────────────────────
-            if (BoundaryThreshold > 0f)
+            if (!UnboundedWorld && BoundaryThreshold > 0f)
             {
                 float bStr = BoundaryStrength;
                 float bTh  = BoundaryThreshold;
@@ -173,10 +215,13 @@ namespace ParticleLife.Physics
             // ── Hard boundary collision ────────────────────────────────────
             float2 newPos = pos + vel * DeltaTime;
 
-            if (newPos.x < -WorldHalfX) { newPos.x = -WorldHalfX; vel.x =  math.abs(vel.x) * BounceRestitution; }
-            if (newPos.x >  WorldHalfX) { newPos.x =  WorldHalfX; vel.x = -math.abs(vel.x) * BounceRestitution; }
-            if (newPos.y < -WorldHalfY) { newPos.y = -WorldHalfY; vel.y =  math.abs(vel.y) * BounceRestitution; }
-            if (newPos.y >  WorldHalfY) { newPos.y =  WorldHalfY; vel.y = -math.abs(vel.y) * BounceRestitution; }
+            if (!UnboundedWorld)
+            {
+                if (newPos.x < -WorldHalfX) { newPos.x = -WorldHalfX; vel.x =  math.abs(vel.x) * BounceRestitution; }
+                if (newPos.x >  WorldHalfX) { newPos.x =  WorldHalfX; vel.x = -math.abs(vel.x) * BounceRestitution; }
+                if (newPos.y < -WorldHalfY) { newPos.y = -WorldHalfY; vel.y =  math.abs(vel.y) * BounceRestitution; }
+                if (newPos.y >  WorldHalfY) { newPos.y =  WorldHalfY; vel.y = -math.abs(vel.y) * BounceRestitution; }
+            }
 
             // ── Idle time ──────────────────────────────────────────────────
             if (!IsPlayerOwned[i])

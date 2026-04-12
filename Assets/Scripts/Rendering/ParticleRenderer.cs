@@ -35,6 +35,13 @@ namespace ParticleLife.Rendering
             new Color(1.00f, 0.70f, 0.20f),  // 7: 金
         };
 
+        // Special-type hardcoded colors (black/white appended beyond normal types).
+        private static readonly Color BlackParticleColor = new Color(0.05f, 0.05f, 0.05f, 1f);
+        private static readonly Color WhiteParticleColor = new Color(0.95f, 0.95f, 0.95f, 1f);
+
+        // Set by ParticleSimulation.Awake so TypeColor can resolve special indices.
+        private int _normalTypeCount;
+
         // GPU Instancing batch size limit (Unity constraint)
         private const int BatchSize = 1023;
 
@@ -53,7 +60,7 @@ namespace ParticleLife.Rendering
             _outlineColors   = new Vector4[BatchSize];
 
             if (_particleMesh == null)
-                _particleMesh = CreateQuadMesh();
+                _particleMesh = CreateCircleMesh();
         }
 
         /// <summary>
@@ -67,19 +74,20 @@ namespace ParticleLife.Rendering
             NativeArray<float2> positions,
             NativeArray<byte>   types,
             NativeArray<bool>   isPlayerOwned,
-            int                 particleCount)
+            int                 particleCount,
+            NativeArray<float>  typeRadii)
         {
             if (_particleMesh == null || _particleMaterial == null) return;
 
             // ── 轮廓 Pass（仅玩家粒子，z=0.01f，先绘制在下层）────────────────
             Vector4 outlineVec = new(_outlineColor.r, _outlineColor.g, _outlineColor.b, _outlineColor.a);
-            float   outlineScale = _particleScale * _outlineRelativeScale;
             int     outlineBatchCount = 0;
 
             for (int i = 0; i < particleCount; i++)
             {
                 if (!isPlayerOwned[i]) continue;
 
+                float outlineScale = ParticleScale(types[i], typeRadii) * _outlineRelativeScale;
                 _outlineMatrices[outlineBatchCount] = Matrix4x4.TRS(
                     new Vector3(positions[i].x, positions[i].y, 0.01f),
                     Quaternion.identity,
@@ -117,7 +125,7 @@ namespace ParticleLife.Rendering
                     _matrices[b] = Matrix4x4.TRS(
                         new Vector3(positions[i].x, positions[i].y, 0f),
                         Quaternion.identity,
-                        Vector3.one * _particleScale);
+                        Vector3.one * ParticleScale(types[i], typeRadii));
 
                     Color baseColor = TypeColor(types[i]);
                     if (isPlayerOwned[i])
@@ -142,25 +150,62 @@ namespace ParticleLife.Rendering
             }
         }
 
-        private Color TypeColor(byte type)
-            => _typeColors.Length > 0 ? _typeColors[type % _typeColors.Length] : Color.white;
+        /// <summary>
+        /// Call once from ParticleSimulation.Awake to allow TypeColor to resolve special indices.
+        /// </summary>
+        public void SetNormalTypeCount(int normalTypeCount) => _normalTypeCount = normalTypeCount;
 
-        /// <summary>Creates a minimal quad mesh for particle rendering.</summary>
-        private static Mesh CreateQuadMesh()
+        // 返回 type 对应的渲染直径（= 半径 × 2）；若 typeRadii 未配置则回退到 _particleScale
+        private float ParticleScale(byte type, NativeArray<float> typeRadii) =>
+            typeRadii.IsCreated && type < typeRadii.Length
+                ? typeRadii[type] * 2f
+                : _particleScale;
+
+        private Color TypeColor(byte type)
         {
-            var mesh = new Mesh { name = "ParticleQuad" };
-            mesh.vertices = new Vector3[]
+            if (_normalTypeCount > 0)
             {
-                new(-0.5f, -0.5f, 0f),
-                new( 0.5f, -0.5f, 0f),
-                new( 0.5f,  0.5f, 0f),
-                new(-0.5f,  0.5f, 0f),
-            };
-            mesh.triangles = new int[] { 0, 2, 1, 0, 3, 2 };
-            mesh.uv = new Vector2[]
+                if (type == _normalTypeCount)     return BlackParticleColor;
+                if (type == _normalTypeCount + 1) return WhiteParticleColor;
+            }
+            return _typeColors.Length > 0 ? _typeColors[type % _typeColors.Length] : Color.white;
+        }
+
+        /// <summary>Creates a circle mesh for particle rendering. Radius = 0.5 (fits in unit square).</summary>
+        private static Mesh CreateCircleMesh(int segments = 24)
+        {
+            var mesh      = new Mesh { name = "ParticleCircle" };
+            int vertCount = segments + 1; // 中心点 + 圆周点
+
+            var vertices  = new Vector3[vertCount];
+            var uvs       = new Vector2[vertCount];
+            var triangles = new int[segments * 3];
+
+            // 中心点
+            vertices[0] = Vector3.zero;
+            uvs[0]      = new Vector2(0.5f, 0.5f);
+
+            // 圆周点
+            for (int i = 0; i < segments; i++)
             {
-                new(0f, 0f), new(1f, 0f), new(1f, 1f), new(0f, 1f),
-            };
+                float angle = 2f * Mathf.PI * i / segments;
+                float x = Mathf.Cos(angle) * 0.5f;
+                float y = Mathf.Sin(angle) * 0.5f;
+                vertices[i + 1] = new Vector3(x, y, 0f);
+                uvs[i + 1]      = new Vector2(x + 0.5f, y + 0.5f);
+            }
+
+            // 扇形三角面（逆时针绕序，从摄像机 -Z 看为正面）
+            for (int i = 0; i < segments; i++)
+            {
+                triangles[i * 3]     = 0;
+                triangles[i * 3 + 1] = (i + 1) % segments + 1;
+                triangles[i * 3 + 2] = i + 1;
+            }
+
+            mesh.vertices  = vertices;
+            mesh.uv        = uvs;
+            mesh.triangles = triangles;
             mesh.RecalculateNormals();
             return mesh;
         }

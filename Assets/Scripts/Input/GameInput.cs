@@ -5,74 +5,145 @@ using UnityEngine.InputSystem;
 namespace ParticleLife.Input
 {
     /// <summary>
-    /// Reads player directional input and outputs a normalized float2 direction vector.
-    /// Supports mouse, keyboard (WASD/arrows), and gamepad (left stick).
-    /// Abstracts input device; all consumers read DirectionThisFrame only.
+    /// Reads player input via Unity Input System actions.
+    /// Supports keyboard, gamepad, and mobile touch out of the box.
+    ///
+    /// ── Inspector setup (one-time after adding this component) ───────────────
+    ///
+    /// _moveAction   — Add Binding → 2D Vector Composite
+    ///                   Up:    Keyboard W  + Keyboard upArrow
+    ///                   Down:  Keyboard S  + Keyboard downArrow
+    ///                   Left:  Keyboard A  + Keyboard leftArrow
+    ///                   Right: Keyboard D  + Keyboard rightArrow
+    ///                 Add Binding → &lt;Gamepad&gt;/leftStick
+    ///                 Mobile: place an OnScreenStick in your UI canvas and set its
+    ///                 Control Path to match this action's binding path.
+    ///
+    /// _shieldAction — Add Binding → &lt;Keyboard&gt;/f
+    ///                 Add Binding → &lt;Gamepad&gt;/buttonSouth
+    ///                 Mobile: place an OnScreenButton and point it at this action.
+    ///
+    /// ── Pointer position ─────────────────────────────────────────────────────
+    /// PointerWorldPosition returns the primary touch position on mobile or the
+    /// mouse cursor position on desktop. PlayerControl uses this for tap/click-to-
+    /// move direction.
     /// </summary>
     public class GameInput : MonoBehaviour
     {
+        [Header("输入动作")]
+        [Tooltip("移动动作：配置 2D Vector Composite（WASD / 方向键）+ 手柄左摇杆；移动端 OnScreenStick 自动绑定")]
+        [SerializeField] private InputAction _moveAction;
+        [Tooltip("技能动作：配置 F 键 + 手柄 South 键；移动端 OnScreenButton 自动绑定")]
+        [SerializeField] private InputAction _shieldAction;
+
         [Header("设置")]
-        [Tooltip("手柄摇杆死区，低于此值视为无输入")]
-        [SerializeField] private float _gamepadDeadzone = 0.15f;
+        [Tooltip("摇杆死区——低于此值视为无输入（适用于手柄和 OnScreenStick）")]
+        [SerializeField] private float _deadzone = 0.15f;
 
-        /// <summary>Normalized input direction this frame. Zero when no input.</summary>
-        public float2 DirectionThisFrame { get; private set; }
+        /// <summary>Normalized movement direction this frame. Zero when no directional input.</summary>
+        public float2 DirectionThisFrame    { get; private set; }
 
-        /// <summary>Raw mouse world position this frame (used by PlayerControl to compute direction).</summary>
-        public float2 MouseWorldPosition { get; private set; }
+        /// <summary>
+        /// World-space pointer position this frame.
+        /// On mobile: primary touch position. On desktop: mouse cursor position.
+        /// Used by PlayerControl for tap / click-to-move direction.
+        /// </summary>
+        public float2 PointerWorldPosition  { get; private set; }
+
+        /// <summary>True on the frame the shield skill key / button is pressed.</summary>
+        public bool   ShieldPressed         { get; private set; }
 
         private Camera _mainCamera;
 
         private void Awake()
         {
             _mainCamera = Camera.main;
+            EnsureDefaultBindings();
+            _moveAction?.Enable();
+            _shieldAction?.Enable();
+        }
+
+        /// <summary>
+        /// Adds sensible default bindings when the Inspector fields have not been
+        /// configured. Inspector-configured bindings are left untouched.
+        /// </summary>
+        private void EnsureDefaultBindings()
+        {
+            if (_moveAction != null && _moveAction.bindings.Count == 0)
+            {
+                _moveAction.AddCompositeBinding("2DVector")
+                    .With("Up",    "<Keyboard>/w")
+                    .With("Up",    "<Keyboard>/upArrow")
+                    .With("Down",  "<Keyboard>/s")
+                    .With("Down",  "<Keyboard>/downArrow")
+                    .With("Left",  "<Keyboard>/a")
+                    .With("Left",  "<Keyboard>/leftArrow")
+                    .With("Right", "<Keyboard>/d")
+                    .With("Right", "<Keyboard>/rightArrow");
+                _moveAction.AddBinding("<Gamepad>/leftStick");
+            }
+
+            if (_shieldAction != null && _shieldAction.bindings.Count == 0)
+            {
+                _shieldAction.AddBinding("<Keyboard>/f");
+                _shieldAction.AddBinding("<Gamepad>/buttonSouth");
+            }
+        }
+
+        private void OnDestroy()
+        {
+            _moveAction?.Disable();
+            _shieldAction?.Disable();
         }
 
         private void Update()
         {
-            DirectionThisFrame = SampleDirection();
-            MouseWorldPosition = SampleMouseWorldPos();
+            DirectionThisFrame   = SampleDirection();
+            PointerWorldPosition = SamplePointerWorldPos();
+            // triggered is true on the frame the action fires (button pressed);
+            // compatible with all Input System versions unlike WasPressedThisFrame().
+            ShieldPressed        = _shieldAction != null && _shieldAction.triggered;
         }
+
+        // ── Private helpers ───────────────────────────────────────────────────
 
         private float2 SampleDirection()
         {
-            // Priority: gamepad > keyboard > mouse
-            float2 gamepad = SampleGamepad();
-            if (math.length(gamepad) > _gamepadDeadzone)
-                return math.normalize(gamepad);
+            if (_moveAction == null) return float2.zero;
 
-            float2 keyboard = SampleKeyboard();
-            if (math.lengthsq(keyboard) > 0f)
-                return math.normalize(keyboard);
+            Vector2 raw = _moveAction.ReadValue<Vector2>();
+            float2  dir = new float2(raw.x, raw.y);
+            float   len = math.length(dir);
 
-            // Mouse direction is computed by PlayerControl using cluster center
-            // Return zero here; PlayerControl reads MouseWorldPosition directly
-            return float2.zero;
+            // Apply deadzone and normalise. Values below deadzone are treated as zero
+            // to avoid stick drift on gamepads and imprecise on-screen sticks.
+            return len > _deadzone ? dir / len : float2.zero;
         }
 
-        private float2 SampleGamepad()
-        {
-            var gp = Gamepad.current;
-            if (gp == null) return float2.zero;
-            var v = gp.leftStick.ReadValue();
-            return new float2(v.x, v.y);
-        }
-
-        private float2 SampleKeyboard()
-        {
-            float x = 0f, y = 0f;
-            if (Keyboard.current.wKey.isPressed || Keyboard.current.upArrowKey.isPressed)    y += 1f;
-            if (Keyboard.current.sKey.isPressed || Keyboard.current.downArrowKey.isPressed)  y -= 1f;
-            if (Keyboard.current.dKey.isPressed || Keyboard.current.rightArrowKey.isPressed) x += 1f;
-            if (Keyboard.current.aKey.isPressed || Keyboard.current.leftArrowKey.isPressed)  x -= 1f;
-            return new float2(x, y);
-        }
-
-        private float2 SampleMouseWorldPos()
+        private float2 SamplePointerWorldPos()
         {
             if (_mainCamera == null) return float2.zero;
-            Vector3 worldPos = _mainCamera.ScreenToWorldPoint(Mouse.current.position.ReadValue());
-            return new float2(worldPos.x, worldPos.y);
+
+            // Primary touch takes priority so mobile tap-to-move works correctly.
+            // Fall back to mouse on desktop.
+            Vector2 screenPos;
+            var touchscreen = Touchscreen.current;
+            if (touchscreen != null && touchscreen.primaryTouch.press.isPressed)
+            {
+                screenPos = touchscreen.primaryTouch.position.ReadValue();
+            }
+            else if (Mouse.current != null)
+            {
+                screenPos = Mouse.current.position.ReadValue();
+            }
+            else
+            {
+                return float2.zero;
+            }
+
+            Vector3 world = _mainCamera.ScreenToWorldPoint(
+                new Vector3(screenPos.x, screenPos.y, -_mainCamera.transform.position.z));
+            return new float2(world.x, world.y);
         }
     }
 }
