@@ -26,6 +26,8 @@ namespace ParticleLife.Player
         [SerializeField] private float _shieldCooldown = 15f;
         [Tooltip("技能激活时玩家粒子间斥力的倍数。值越大，扩散越明显。")]
         [SerializeField] private float _shieldPlayerRepulsionScale = 5f;
+        [Tooltip("技能激活时转化为随机普通类型的玩家粒子比例（0–1）。0.2 = 约 20%")]
+        [SerializeField][Range(0f, 1f)] private float _scatterFraction = 0.2f;
 
         [Header("引用")]
         [SerializeField] private GameInput          _input;
@@ -72,6 +74,7 @@ namespace ParticleLife.Player
             IsShieldActive      = true;
             ShieldTimeRemaining = _shieldDuration;
             _simulation.SetShieldActive(true, _shieldPlayerRepulsionScale);
+            _simulation.RequestScatterPlayerParticles(_scatterFraction);
         }
 
         private void Deactivate()

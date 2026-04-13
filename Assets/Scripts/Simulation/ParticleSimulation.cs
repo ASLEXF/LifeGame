@@ -98,6 +98,14 @@ namespace ParticleLife.Simulation
         [Tooltip("计算平滑前进方向所用的历史窗口（秒）；历史不足时退化为实时输入方向")]
         [SerializeField] private float _spawnDirWindowSec = 2f;
 
+        [Header("无边界世界 — 集群预分组")]
+        [Tooltip("每组共享种子位置的粒子数下限。1 = 每粒子独立（退化为原行为）")]
+        [SerializeField] private int   _spawnGroupSizeMin  = 2;
+        [Tooltip("每组共享种子位置的粒子数上限。与 Min 相等时固定组大小")]
+        [SerializeField] private int   _spawnGroupSizeMax  = 4;
+        [Tooltip("组内每个粒子相对种子位置的最大散布半径（世界单位）。0 = 全部重叠在种子位置")]
+        [SerializeField] private float _clusterSpawnJitter = 0.5f;
+
         [Header("引力矩阵初始配置")]
         [Tooltip("TypeCount×TypeCount 个条目，按 typeA * TypeCount + typeB 排列。\n" +
                  "留空则运行时随机生成。右键组件 → 生成默认引力矩阵 可填入默认值。")]
@@ -144,6 +152,11 @@ namespace ParticleLife.Simulation
         // ── Skill state ───────────────────────────────────────────────────────
         private bool  _shieldActive;
         private float _shieldPlayerRepulsionScale = 1f;
+
+        // Scatter request: set via RequestScatterPlayerParticles(), consumed in FixedUpdate
+        // after the pending job is completed (NativeArray write safety).
+        private bool  _pendingScatter;
+        private float _pendingScatterFraction;
 
         // ── Runtime matrix editing ────────────────────────────────────────────
         private bool _cellSizeDirty;
@@ -249,6 +262,13 @@ namespace ParticleLife.Simulation
             {
                 _pendingHandle.Complete();
                 _jobPending = false;
+            }
+
+            // Execute deferred scatter (requested by PlayerSkill.Activate on the Update thread).
+            if (_pendingScatter)
+            {
+                ExecuteScatterPlayerParticles(_pendingScatterFraction);
+                _pendingScatter = false;
             }
 
             // Recalculate cell size if any distanceThreshold changed since last frame
@@ -545,6 +565,56 @@ namespace ParticleLife.Simulation
         }
 
         /// <summary>
+        /// Schedules a one-shot conversion of approximately <paramref name="fraction"/> of
+        /// player-owned particles into random non-special types. Executes safely at the
+        /// start of the next FixedUpdate, after any pending job is completed.
+        /// </summary>
+        public void RequestScatterPlayerParticles(float fraction)
+        {
+            _pendingScatter         = true;
+            _pendingScatterFraction = fraction;
+        }
+
+        /// <summary>
+        /// Converts each player-owned particle to a random non-special type with probability
+        /// <paramref name="fraction"/>. Converted particles are released from player ownership.
+        /// Must be called on the main thread with no job running.
+        /// </summary>
+        private void ExecuteScatterPlayerParticles(float fraction)
+        {
+            // Pass 1: probabilistic conversion.
+            int converted = 0;
+            for (int i = 0; i < _particleCount; i++)
+            {
+                if (!_isPlayerOwned[i]) continue;
+                if (_cullRng.NextFloat() >= fraction) continue;
+
+                _types[i]             = (byte)_cullRng.NextInt(0, _typeCount);
+                _isPlayerOwned[i]     = false;
+                _isInPlayerCluster[i] = false;
+                converted++;
+            }
+
+            if (converted > 0) return;
+
+            // Guarantee: always convert at least one particle.
+            // Reservoir sampling — uniform random selection in a single pass, no allocation.
+            int chosen = -1;
+            int seen   = 0;
+            for (int i = 0; i < _particleCount; i++)
+            {
+                if (!_isPlayerOwned[i]) continue;
+                seen++;
+                if (_cullRng.NextInt(0, seen) == 0) chosen = i;
+            }
+            if (chosen < 0) return;
+
+            _types[chosen]             = (byte)_cullRng.NextInt(0, _typeCount);
+            _isPlayerOwned[chosen]     = false;
+            _isInPlayerCluster[chosen] = false;
+        }
+
+        /// <summary>
         /// Resets all particle state and re-spawns the initial population.
         /// Call before GameStateManager.RestartSession() to ensure a clean slate.
         /// </summary>
@@ -663,7 +733,7 @@ namespace ParticleLife.Simulation
         {
             float despawnR2 = _despawnRadius * _despawnRadius;
 
-            // Precompute forward direction once; bias probability applied per-particle.
+            // Precompute forward direction once; bias probability applied per group seed.
             bool  useBias      = directionBias > 0f && math.lengthsq(moveDir) > 0.001f;
             float forwardAngle = useBias ? math.atan2(moveDir.y, moveDir.x) : 0f;
 
@@ -673,19 +743,42 @@ namespace ParticleLife.Simulation
                 if (_types[i] < _typeCount)
                     _cullTypeCounts[_types[i]]++;
 
+            // Group spawn state — recycled particles share a seed position per group,
+            // so they appear near each other and begin forming clusters immediately.
+            // Set _spawnGroupSizeMin = _spawnGroupSizeMax = 1 to restore original behaviour.
+            int    groupCounter     = 0;
+            int    currentGroupSize = 1;
+            float2 groupSeedPos     = float2.zero;
+
             for (int i = 0; i < _particleCount; i++)
             {
                 if (_isPlayerOwned[i]) continue;
                 if (math.distancesq(_positionsRead[i], center) <= despawnR2) continue;
 
-                byte  newType = PickRarestType();
-                // Mixture distribution: with probability directionBias spawn in forward
-                // ±90° hemisphere; otherwise full circle. All directions stay populated.
-                float angle = useBias && _cullRng.NextFloat() < directionBias
-                    ? forwardAngle + (_cullRng.NextFloat() * 2f - 1f) * (math.PI * 0.5f)
-                    : _cullRng.NextFloat() * math.PI * 2f;
-                float  radius  = _spawnRadiusMin + _cullRng.NextFloat() * (_spawnRadiusMax - _spawnRadiusMin);
-                float2 newPos  = center + new float2(math.cos(angle), math.sin(angle)) * radius;
+                // Pick a new seed position at the start of each group.
+                if (groupCounter == 0)
+                {
+                    currentGroupSize = (_spawnGroupSizeMax <= _spawnGroupSizeMin)
+                        ? _spawnGroupSizeMin
+                        : _cullRng.NextInt(_spawnGroupSizeMin, _spawnGroupSizeMax + 1);
+                    currentGroupSize = math.max(1, currentGroupSize);
+
+                    // Mixture distribution: biased toward forward hemisphere or full circle.
+                    float seedAngle = useBias && _cullRng.NextFloat() < directionBias
+                        ? forwardAngle + (_cullRng.NextFloat() * 2f - 1f) * (math.PI * 0.5f)
+                        : _cullRng.NextFloat() * math.PI * 2f;
+                    float seedRadius = _spawnRadiusMin + _cullRng.NextFloat() * (_spawnRadiusMax - _spawnRadiusMin);
+                    groupSeedPos = center + new float2(math.cos(seedAngle), math.sin(seedAngle)) * seedRadius;
+                }
+
+                // Scatter each particle within the group around the seed (uniform disc).
+                float jitterAngle  = _cullRng.NextFloat() * math.PI * 2f;
+                float jitterRadius = _cullRng.NextFloat() * _clusterSpawnJitter;
+                float2 newPos = groupSeedPos + new float2(math.cos(jitterAngle), math.sin(jitterAngle)) * jitterRadius;
+
+                groupCounter = (groupCounter + 1) % currentGroupSize;
+
+                byte newType = PickRarestType();
 
                 _positionsRead[i]  = newPos;
                 _positionsWrite[i] = newPos;

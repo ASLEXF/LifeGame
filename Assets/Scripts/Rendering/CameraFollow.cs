@@ -28,6 +28,10 @@ namespace ParticleLife.Rendering
         [SerializeField] private bool  _unboundedMode      = false;
         [Tooltip("无边界模式下的正交摄像机尺寸（世界单位）")]
         [SerializeField] private float _unboundedOrthoSize = 35f;
+        [Tooltip("无边界模式下的摄像机平滑时间（秒）。值越小越贴近玩家，0 = 完全跟手。建议 0–0.1")]
+        [SerializeField] private float _unboundedSmoothTime = 0.05f;
+        [Tooltip("无边界模式下的摄像机最大移动速度（世界单位/秒），0 = 不限制。应 ≥ 玩家最大速度以避免画面滞后")]
+        [SerializeField] private float _unboundedMaxSpeed   = 0f;
 
         [Header("跟随设置")]
         [Tooltip("有界模式下的摄像机偏移强度：0 = 固定居中，1 = 完全跟随。建议 0.1–0.2")]
@@ -73,12 +77,16 @@ namespace ParticleLife.Rendering
                 targetPos.y = centroid.y * strength;
             }
 
+            float smoothTime = _unboundedMode ? _unboundedSmoothTime : _smoothTime;
+            float maxSpeed   = _unboundedMode
+                ? (_unboundedMaxSpeed > 0f ? _unboundedMaxSpeed : Mathf.Infinity)
+                : (_maxSpeed          > 0f ? _maxSpeed          : Mathf.Infinity);
             transform.position = Vector3.SmoothDamp(
                 transform.position,
                 targetPos,
                 ref _velocity,
-                _smoothTime,
-                _maxSpeed > 0f ? _maxSpeed : Mathf.Infinity);
+                smoothTime,
+                maxSpeed);
         }
 
         private void ApplyOrthographicSize()
