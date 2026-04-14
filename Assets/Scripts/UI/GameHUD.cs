@@ -43,6 +43,9 @@ namespace ParticleLife.UI
         {
             _gameState.OnStateChanged += OnStateChanged;
 
+            // Sync visibility to initial state — GameStateManager now starts at MainMenu.
+            gameObject.SetActive(_gameState.CurrentState == GameState.Running);
+
             _captureSlider.minValue    = 0f;
             _captureSlider.maxValue    = 1f;
             _captureSlider.interactable = false;
@@ -100,8 +103,8 @@ namespace ParticleLife.UI
 
         private void OnStateChanged(GameState state)
         {
-            // Hide HUD the same frame failure is detected
-            if (state == GameState.Failed)
+            // Hide HUD in main menu and on failure; show only when running
+            if (state == GameState.Failed || state == GameState.MainMenu)
                 gameObject.SetActive(false);
             else if (state == GameState.Running)
                 gameObject.SetActive(true);

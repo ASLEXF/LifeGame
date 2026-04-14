@@ -31,7 +31,13 @@ namespace ParticleLife.Persistence
         private const string FileName = "matrix_config.json";
 
         private float _saveTimer = -1f; // -1 = not pending
-        private string SavePath => Path.Combine(Application.persistentDataPath, FileName);
+
+        /// <summary>
+        /// Editor  : &lt;ProjectRoot&gt;/matrix_config.json  (one level above Assets/)
+        /// Build   : &lt;GameFolder&gt;/matrix_config.json   (same directory as the .exe)
+        /// </summary>
+        private static string SavePath =>
+            Path.Combine(Path.GetDirectoryName(Application.dataPath)!, FileName);
 
         // ── Serialization container ───────────────────────────────────────────
 

@@ -54,6 +54,8 @@ namespace ParticleLife.Simulation
         [SerializeField] private float _playerMaxSpeed            = 25f;
         [Tooltip("达到此粒子数时，外部力干扰降至最低（满抗性）")]
         [SerializeField] private int   _playerResistanceFullAt    = 50;
+        [Tooltip("团簇凝聚力（每单位距离的力）：将玩家粒子向质心拉近，减少高速移动时的拉伸。0 = 禁用。建议 10–40")]
+        [SerializeField] private float _clusterCohesionStrength   = 20f;
         [Tooltip("最大外力削减比例（0 = 无抗性，1 = 完全免疫外力）建议 0.6–0.8")]
         [SerializeField][Range(0f, 1f)] private float _playerMaxExternalReduction = 0.75f;
 
@@ -97,6 +99,11 @@ namespace ParticleLife.Simulation
         [SerializeField][Range(0f, 1f)] private float _spawnDirectionBias = 0.7f;
         [Tooltip("计算平滑前进方向所用的历史窗口（秒）；历史不足时退化为实时输入方向")]
         [SerializeField] private float _spawnDirWindowSec = 2f;
+
+        [Header("无边界世界 — 初始生成半径")]
+        [Tooltip("无边界模式下初始生成环的最小半径（世界单位）。" +
+                 "应小于 _spawnRadiusMin，允许粒子在玩家起点附近形成团簇。0 = 从原点向外均匀分布")]
+        [SerializeField] private float _initialSpawnRadiusMin = 5f;
 
         [Header("无边界世界 — 集群预分组")]
         [Tooltip("每组共享种子位置的粒子数下限。1 = 每粒子独立（退化为原行为）")]
@@ -346,6 +353,8 @@ namespace ParticleLife.Simulation
                 UnboundedWorld             = _unboundedWorld,
                 ShieldActive               = _shieldActive,
                 ShieldPlayerRepulsionScale = _shieldPlayerRepulsionScale,
+                PlayerCentroid             = _playerCentroid,
+                ClusterCohesionStrength    = _clusterCohesionStrength,
             };
 
             _pendingHandle = physicsJob.Schedule(_particleCount, 64, gridHandle);
@@ -401,9 +410,7 @@ namespace ParticleLife.Simulation
             // Normal types — cyclic assignment keeps populations perfectly balanced.
             for (int i = 0; i < normalCount; i++)
             {
-                var pos = new float2(
-                    rng.NextFloat() * (_worldHalfX * 2f) - _worldHalfX,
-                    rng.NextFloat() * (_worldHalfY * 2f) - _worldHalfY);
+                var pos = SampleInitialPosition(ref rng);
                 _positionsRead[i]  = pos;
                 _positionsWrite[i] = pos;
                 _velocities[i]     = float2.zero;
@@ -414,16 +421,14 @@ namespace ParticleLife.Simulation
             _particleCount = normalCount;
 
             // Special types appended after normal particles.
-            byte blackType  = (byte)_typeCount;
-            byte whiteType  = (byte)(_typeCount + 1);
+            byte blackType = (byte)_typeCount;
+            byte whiteType = (byte)(_typeCount + 1);
 
             int blackCount = Mathf.Min(_initialBlackCount, _maxParticleCount - _particleCount);
             for (int i = 0; i < blackCount; i++)
             {
                 int idx = _particleCount + i;
-                var pos = new float2(
-                    rng.NextFloat() * (_worldHalfX * 2f) - _worldHalfX,
-                    rng.NextFloat() * (_worldHalfY * 2f) - _worldHalfY);
+                var pos = SampleInitialPosition(ref rng);
                 _positionsRead[idx]  = pos;
                 _positionsWrite[idx] = pos;
                 _velocities[idx]     = float2.zero;
@@ -437,9 +442,7 @@ namespace ParticleLife.Simulation
             for (int i = 0; i < whiteCount; i++)
             {
                 int idx = _particleCount + i;
-                var pos = new float2(
-                    rng.NextFloat() * (_worldHalfX * 2f) - _worldHalfX,
-                    rng.NextFloat() * (_worldHalfY * 2f) - _worldHalfY);
+                var pos = SampleInitialPosition(ref rng);
                 _positionsRead[idx]  = pos;
                 _positionsWrite[idx] = pos;
                 _velocities[idx]     = float2.zero;
@@ -448,6 +451,28 @@ namespace ParticleLife.Simulation
                 _idleTime[idx]       = 0f;
             }
             _particleCount += whiteCount;
+        }
+
+        /// <summary>
+        /// Returns a spawn position for initial particle placement.
+        /// Unbounded mode: uniform random point in the annulus [_spawnRadiusMin, _spawnRadiusMax]
+        ///   centred on the world origin (player start position).
+        /// Bounded mode: uniform random point in the world rectangle (original behaviour).
+        /// </summary>
+        private float2 SampleInitialPosition(ref Unity.Mathematics.Random rng)
+        {
+            if (_unboundedWorld)
+            {
+                // Use _initialSpawnRadiusMin (typically smaller) so particles can form
+                // clusters near the player start position, distinct from the runtime
+                // CullAndRespawn ring which places particles off-screen (_spawnRadiusMin).
+                float angle  = rng.NextFloat() * math.PI * 2f;
+                float radius = _initialSpawnRadiusMin + rng.NextFloat() * (_spawnRadiusMax - _initialSpawnRadiusMin);
+                return new float2(math.cos(angle), math.sin(angle)) * radius;
+            }
+            return new float2(
+                rng.NextFloat() * (_worldHalfX * 2f) - _worldHalfX,
+                rng.NextFloat() * (_worldHalfY * 2f) - _worldHalfY);
         }
 
         // ── Player input state ────────────────────────────────────────────────
@@ -496,6 +521,22 @@ namespace ParticleLife.Simulation
                 _cellSizeDirty = true;
 
             OnGravityMatrixChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Resets every gravity matrix entry to the hardcoded defaults produced by
+        /// <see cref="Core.GravityMatrix.CreateDefault"/>. Uses a temporary allocation;
+        /// no long-lived memory overhead. Fires <see cref="OnGravityMatrixChanged"/> for
+        /// each entry so <see cref="ConfigPersistence"/> will schedule a debounced save.
+        /// </summary>
+        public void ResetMatrixToDefault()
+        {
+            var def = Core.GravityMatrix.CreateDefault(_typeCount, Unity.Collections.Allocator.Temp);
+            int n   = def.TypeCount;
+            for (int a = 0; a < n; a++)
+            for (int b = 0; b < n; b++)
+                SetGravityEntry(a, b, def.Get(a, b));
+            def.Dispose();
         }
 
         /// <summary>Number of configurable (normal) particle types. Does NOT include black/white special types.</summary>

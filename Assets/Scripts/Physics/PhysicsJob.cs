@@ -70,6 +70,16 @@ namespace ParticleLife.Physics
         /// </summary>
         public bool ShieldActive;
 
+        /// <summary>World-space centroid of the player cluster. Used for cohesion force.</summary>
+        [ReadOnly] public float2 PlayerCentroid;
+        /// <summary>
+        /// Spring-like cohesion force magnitude per unit of distance from the cluster centroid.
+        /// Pulls each player-owned particle toward the centroid, reducing stretch during fast movement.
+        /// Not scaled by ForceScale — this is an internal cohesion force, not particle–particle gravity.
+        /// 0 = disabled.
+        /// </summary>
+        [ReadOnly] public float ClusterCohesionStrength;
+
         // ── Outputs ─────────────────────────────────────────────────────────
         [WriteOnly] public NativeArray<float2> PositionsWrite;
         [NativeDisableParallelForRestriction] public NativeArray<float2> Velocities;
@@ -175,6 +185,13 @@ namespace ParticleLife.Physics
                 force           -= extForce;
                 force           += extForce * extScale;
             }
+
+            // ── Player cluster cohesion ───────────────────────────────────
+            // Spring force toward the cluster centroid for each player-owned particle.
+            // Reduces stretching during fast movement without affecting non-player physics.
+            // Applied after resistance scaling so it is never cancelled by the shield or resistance.
+            if (isPlayer && ClusterCohesionStrength > 0f)
+                force += (PlayerCentroid - pos) * ClusterCohesionStrength;
 
             // ── Boundary repulsion field ───────────────────────────────────
             if (!UnboundedWorld && BoundaryThreshold > 0f)

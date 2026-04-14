@@ -108,6 +108,10 @@ namespace ParticleLife.UI
             resetBtn.AddToClassList("action-button");
             header.Add(resetBtn);
 
+            var defaultBtn = new Button(OnResetToDefaults) { text = "重置为默认" };
+            defaultBtn.AddToClassList("action-button");
+            header.Add(defaultBtn);
+
             _panel.Add(header);
 
             // ── Grid hint label ────────────────────────────────────────────
@@ -248,6 +252,25 @@ namespace ParticleLife.UI
                 int idx   = a * n + b;
                 var entry = _initialEntries[idx];
                 _simulation.SetGravityEntry(a, b, entry);
+                RefreshCell(idx, entry);
+            }
+        }
+
+        /// <summary>
+        /// Resets the entire matrix to the hardcoded defaults (GravityMatrix.CreateDefault).
+        /// This triggers a debounced save via ConfigPersistence so the defaults are persisted.
+        /// </summary>
+        private void OnResetToDefaults()
+        {
+            _simulation.ResetMatrixToDefault();
+
+            // Refresh all slider visuals to match the new default values.
+            int n = _simulation.TypeCount;
+            for (int a = 0; a < n; a++)
+            for (int b = 0; b < n; b++)
+            {
+                int idx   = a * n + b;
+                var entry = _simulation.GetGravityEntry(a, b);
                 RefreshCell(idx, entry);
             }
         }

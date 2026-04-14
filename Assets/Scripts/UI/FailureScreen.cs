@@ -70,7 +70,7 @@ namespace ParticleLife.UI
         {
             if (state == GameState.Failed)
                 Show();
-            else if (state == GameState.Running)
+            else if (state == GameState.Running || state == GameState.MainMenu)
                 Hide();
         }
 

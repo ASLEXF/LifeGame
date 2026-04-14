@@ -6,6 +6,8 @@ namespace ParticleLife.Management
     /// <summary>Session lifecycle states.</summary>
     public enum GameState
     {
+        /// <summary>Initial state. Main menu is visible, simulation is paused.</summary>
+        MainMenu,
         Running,
         Failed,
         Ended,
@@ -18,8 +20,8 @@ namespace ParticleLife.Management
     /// </summary>
     public class GameStateManager : MonoBehaviour
     {
-        /// <summary>Current session state.</summary>
-        public GameState CurrentState { get; private set; } = GameState.Running;
+        /// <summary>Current session state. Starts at MainMenu so the menu is shown on launch.</summary>
+        public GameState CurrentState { get; private set; } = GameState.MainMenu;
 
         /// <summary>Elapsed time in seconds since session started (Running state only).</summary>
         public float SessionDuration { get; private set; }
@@ -49,7 +51,7 @@ namespace ParticleLife.Management
 
         /// <summary>
         /// Resets all session statistics and transitions to Running.
-        /// Call when restarting a session.
+        /// Call when restarting a session (not when returning to main menu).
         /// </summary>
         public void RestartSession()
         {

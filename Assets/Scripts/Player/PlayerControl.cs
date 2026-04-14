@@ -12,8 +12,8 @@ namespace ParticleLife.Player
     /// Manages the player cluster with deferred initialization and split detection.
     ///
     /// Session lifecycle:
-    ///   0–5s  : No player particles. Timer counts up.
-    ///   5s    : AssignInitialCluster() — picks the densest same-type cluster as player.
+    ///   Frame 1: AssignInitialCluster() — picks the densest same-type cluster as player.
+    ///            Particles have already settled during the main menu UI transition.
     ///   Each frame (LateUpdate, order 10, after PhysicsJob is complete):
     ///     1. Split detection: Union-Find over player particles, find largest component.
     ///        Non-main-cluster particles are IMMEDIATELY reverted to normal (no timer).
@@ -29,9 +29,6 @@ namespace ParticleLife.Player
     [RequireComponent(typeof(ParticleSimulation))]
     public class PlayerControl : MonoBehaviour
     {
-        [Header("初始化")]
-        [SerializeField] private float _initialDelaySec    = 5f;
-
         [Header("玩家控制")]
         [Tooltip("团簇连接判定距离：同时用于分裂检测（Union-Find）和相邻粒子吸附")]
         [SerializeField] private float _connectionRadius   = 5f;
@@ -54,9 +51,7 @@ namespace ParticleLife.Player
 
         private ParticleSimulation _simulation;
 
-        private float _startTimer;
         private bool  _hasAssigned;
-        private bool  _firstSession = true;  // first start respects _initialDelaySec; restarts skip it
         private byte  _playerType;
         private float _zeroTimer;
 
@@ -107,6 +102,10 @@ namespace ParticleLife.Player
             _adoptionQueue = new NativeQueue<int>(Allocator.Persistent);
 
             _gameState.OnStateChanged += OnStateChanged;
+
+            // Sync enabled state to initial GameState — simulation starts at MainMenu,
+            // so player input must be disabled until the game actually starts.
+            enabled = _gameState.CurrentState == GameState.Running;
         }
 
         private void OnDestroy()
@@ -120,8 +119,17 @@ namespace ParticleLife.Player
 
         private void OnStateChanged(GameState state)
         {
-            if (state == GameState.Running)
+            // Disable player input while in main menu to prevent input injection into
+            // the background simulation. Re-enable the moment gameplay starts.
+            if (state == GameState.MainMenu)
+            {
+                enabled = false;
+            }
+            else if (state == GameState.Running)
+            {
+                enabled = true;
                 ResetSession();
+            }
         }
 
         private void LateUpdate()
@@ -133,9 +141,7 @@ namespace ParticleLife.Player
 
             if (!_hasAssigned)
             {
-                _startTimer += Time.deltaTime;
-                if (_startTimer >= _initialDelaySec)
-                    AssignInitialCluster(count);
+                AssignInitialCluster(count);
                 return;
             }
 
@@ -196,10 +202,6 @@ namespace ParticleLife.Player
 
         private void ResetSession()
         {
-            // First session: wait the full delay so particles settle into natural clusters.
-            // Subsequent restarts: skip the delay so the camera follows the player immediately.
-            _startTimer     = _firstSession ? 0f : _initialDelaySec;
-            _firstSession   = false;
             _hasAssigned    = false;
             _zeroTimer      = 0f;
             MainClusterSize = 0;
@@ -226,20 +228,22 @@ namespace ParticleLife.Player
             float scanSq  = _connectionRadius * _connectionRadius;
             float adoptSq = _connectionRadius * _connectionRadius;
 
-            // Step 1: find particle with most same-type neighbors (skip special types)
-            int bestIndex     = 0;
+            // Randomly select player type each session — prevents always starting as the same type.
+            // Special types (index >= TypeCount) are excluded.
+            _playerType = (byte)UnityEngine.Random.Range(0, _simulation.TypeCount);
+
+            // Step 1: find the particle of _playerType with the most same-type neighbors.
+            int bestIndex     = -1;
             int bestNeighbors = -1;
             for (int i = 0; i < count; i++)
             {
-                // Black/white special types (index >= TypeCount) must not become the player cluster.
-                if (types[i] >= _simulation.TypeCount) continue;
+                if (types[i] != _playerType) continue;
 
                 int    neighbors = 0;
-                byte   typeI     = types[i];
                 float2 posI      = positions[i];
                 for (int j = 0; j < count; j++)
                 {
-                    if (j == i || types[j] != typeI) continue;
+                    if (j == i || types[j] != _playerType) continue;
                     if (math.distancesq(posI, positions[j]) < scanSq)
                         neighbors++;
                 }
@@ -250,7 +254,16 @@ namespace ParticleLife.Player
                 }
             }
 
-            _playerType = types[bestIndex];
+            // Fallback: chosen type has no particles — pick any non-special particle.
+            if (bestIndex < 0)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (types[i] < _simulation.TypeCount) { bestIndex = i; break; }
+                }
+                if (bestIndex < 0) return;
+                _playerType = types[bestIndex];
+            }
 
             // Step 2: BFS flood-fill from bestIndex.
             // Only particles reachable via a chain of _connectionRadius-adjacent same-type
