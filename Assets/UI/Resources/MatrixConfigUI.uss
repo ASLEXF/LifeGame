@@ -1,16 +1,18 @@
 /* MatrixConfigUI.uss — Gravity Matrix panel styles */
 
 .matrix-panel {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 720px;
-    max-height: 90%;
+    position: relative;
+    margin-top: 12px;
+    margin-right: 12px;
+    margin-bottom: 12px;
+    margin-left: 12px;
+    flex-grow: 1;
+    min-height: 0;
     background-color: rgba(10, 10, 10, 0.88);
     border-radius: 8px;
-    padding: 12px;
+    padding: 14px;
     flex-direction: column;
-    overflow: scroll;
+    overflow: hidden;
 }
 
 .header-row {
@@ -21,45 +23,81 @@
 
 .panel-title {
     flex-grow: 1;
-    font-size: 16px;
+    font-size: 30px;
     color: rgb(220, 220, 220);
     -unity-font-style: bold;
 }
 
 .grid-hint {
-    font-size: 11px;
+    font-size: 30px;
     color: rgb(150, 150, 150);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
+}
+
+.keyboard-hint {
+    font-size: 30px;
+    color: rgb(165, 180, 205);
+    margin-bottom: 4px;
+}
+
+.grid-hint-secondary {
+    font-size: 11px;
+    color: rgb(130, 130, 130);
+    margin-bottom: 4px;
 }
 
 .action-button {
     margin-left: 6px;
-    padding: 4px 10px;
+    padding: 10px 20px;
     background-color: rgba(60, 60, 60, 0.9);
     border-color: rgba(120, 120, 120, 0.6);
     border-width: 1px;
     border-radius: 4px;
     color: rgb(200, 200, 200);
-    font-size: 12px;
+    font-size: 30px;
 }
 
 .action-button:hover {
     background-color: rgba(90, 90, 90, 0.9);
 }
 
+.close-button {
+    margin-left: 8px;
+    width: 52px;
+    height: 52px;
+    min-width: 52px;
+    padding: 0;
+    background-color: rgba(120, 70, 70, 0.85);
+    border-color: rgba(210, 140, 140, 0.75);
+    border-width: 1px;
+    border-radius: 4px;
+    color: rgb(235, 220, 220);
+    font-size: 30px;
+}
+
+.close-button:hover {
+    background-color: rgba(150, 80, 80, 0.9);
+}
+
 .grid-container {
     flex-direction: column;
 }
 
+.grid-scroll {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-height: 0;
+}
+
 .matrix-row {
     flex-direction: row;
-    margin-bottom: 4px;
-    align-items: flex-start;
+    margin-bottom: 6px;
+    align-items: stretch;
 }
 
 .row-label {
-    width: 52px;
-    font-size: 12px;
+    width: 68px;
+    font-size: 18px;
     color: rgb(180, 180, 180);
     -unity-text-align: middle-right;
     padding-right: 6px;
@@ -68,40 +106,80 @@
 
 .matrix-cell {
     flex-grow: 1;
-    flex-shrink: 1;
-    margin: 2px;
-    padding: 4px 6px;
+    flex-shrink: 0;
+    margin: 4px;
+    padding: 8px 10px;
     border-radius: 4px;
     border-width: 1px;
     border-color: rgba(255, 255, 255, 0.08);
-    min-width: 80px;
+    min-width: 280px;
     transition-property: background-color;
     transition-duration: 0.15s;
 }
 
 .cell-label {
-    font-size: 10px;
+    font-size: 16px;
     color: rgb(160, 160, 160);
-    margin-bottom: 2px;
+    margin-bottom: 6px;
 }
 
 .attr-slider {
-    margin-bottom: 2px;
+    margin-bottom: 8px;
+    min-height: 34px;
 }
 
 .attr-slider > Label {
-    font-size: 10px;
+    font-size: 16px;
     color: rgb(200, 200, 200);
-    min-width: 28px;
+    min-width: 88px;
+    max-width: 88px;
+}
+
+.attr-slider .unity-base-field__input {
+    min-width: 96px;
+    max-width: 112px;
+    font-size: 16px;
 }
 
 .cell-foldout > Toggle > Label {
-    font-size: 10px;
+    font-size: 16px;
     color: rgb(160, 160, 160);
 }
 
 .cell-foldout Slider > Label {
-    font-size: 10px;
+    font-size: 16px;
     color: rgb(200, 200, 200);
-    min-width: 56px;
+    min-width: 88px;
+    max-width: 88px;
+}
+
+.cell-foldout Slider {
+    min-height: 34px;
+    margin-top: 4px;
+}
+
+.cell-foldout Slider .unity-base-field__input {
+    min-width: 96px;
+    max-width: 112px;
+    font-size: 16px;
+}
+
+.matrix-cell .unity-base-field__input {
+    -unity-text-align: middle-right;
+}
+
+/* Force slider internals to reserve space and avoid overlap */
+.matrix-cell Slider {
+    width: 100%;
+    min-width: 0;
+}
+
+.matrix-cell Slider .unity-base-field__label {
+    min-width: 88px;
+    max-width: 88px;
+}
+
+.matrix-cell Slider .unity-base-slider__input {
+    flex-grow: 1;
+    min-width: 120px;
 }

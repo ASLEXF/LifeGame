@@ -69,10 +69,15 @@ namespace ParticleLife.UI
             if (!gameObject.activeSelf) return;
 
             int clusters = _playerControl.ClusterCount;
-            string clusterSuffix = clusters > 1 ? $" <color=#ff6644>[{clusters} 团簇]</color>" : "";
-            _playerParticleCountText.text = $"玩家粒子数：{_playerControl.MainClusterSize}{clusterSuffix}";
-            _particleCountText.text = $"粒子总数：{_clusterDetector.ClusterParticleCount}";
-            _survivalTimeText.text  = $"存活：{FormatTime(_gameState.SessionDuration)}";
+            string clusterSuffix = clusters > 1
+                ? string.Format(Localization.Get("hud_clusters"), clusters)
+                : "";
+            _playerParticleCountText.text = string.Format(
+                Localization.Get("hud_player_count"), _playerControl.MainClusterSize, clusterSuffix);
+            _particleCountText.text = string.Format(
+                Localization.Get("hud_total_count"), _clusterDetector.ClusterParticleCount);
+            _survivalTimeText.text = string.Format(
+                Localization.Get("hud_survival"), Localization.FormatTime(_gameState.SessionDuration));
 
             float captureFraction = _captureDetection.CaptureDuration > 0f
                 ? _captureDetection.CaptureTimer / _captureDetection.CaptureDuration
@@ -110,13 +115,5 @@ namespace ParticleLife.UI
                 gameObject.SetActive(true);
         }
 
-        // ── Helpers ───────────────────────────────────────────────────────────
-
-        private static string FormatTime(float seconds)
-        {
-            int m = (int)(seconds / 60);
-            int s = (int)(seconds % 60);
-            return m > 0 ? $"{m}分{s:D2}秒" : $"{s}秒";
-        }
     }
 }

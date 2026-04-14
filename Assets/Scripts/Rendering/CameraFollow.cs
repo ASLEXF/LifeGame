@@ -37,11 +37,17 @@ namespace ParticleLife.Rendering
         [Tooltip("有界模式下的摄像机偏移强度：0 = 固定居中，1 = 完全跟随。建议 0.1–0.2")]
         [SerializeField][Range(0f, 1f)] private float _followStrength = 0.15f;
 
-        [Tooltip("摄像机平滑时间（秒）")]
+        [Tooltip("摄像机平滑时间（秒）— 近距离时使用此值；距离越远跟随越快")]
         [SerializeField] private float _smoothTime = 0.5f;
 
         [Tooltip("摄像机最大移动速度（世界单位/秒），0 = 不限制")]
         [SerializeField] private float _maxSpeed   = 20f;
+
+        [Tooltip("超过此距离时摄像机立即传送至目标（用于重启后快速归位）")]
+        [SerializeField] private float _snapDistance = 15f;
+
+        [Tooltip("距离加速系数：实际 smoothTime = smoothTime / (1 + dist × factor)。0 = 线性。建议 0.3–0.6")]
+        [SerializeField] private float _distanceAccelFactor = 0.4f;
 
         [Header("引用")]
         [SerializeField] private PlayerControl      _playerControl;
@@ -81,12 +87,26 @@ namespace ParticleLife.Rendering
             float maxSpeed   = _unboundedMode
                 ? (_unboundedMaxSpeed > 0f ? _unboundedMaxSpeed : Mathf.Infinity)
                 : (_maxSpeed          > 0f ? _maxSpeed          : Mathf.Infinity);
-            transform.position = Vector3.SmoothDamp(
-                transform.position,
-                targetPos,
-                ref _velocity,
-                smoothTime,
-                maxSpeed);
+
+            float dist = Vector3.Distance(transform.position, targetPos);
+            if (dist > _snapDistance)
+            {
+                // Snap instantly when very far — avoids long catch-up after restart.
+                transform.position = targetPos;
+                _velocity = Vector3.zero;
+            }
+            else
+            {
+                // Non-linear follow: divide smoothTime by distance factor so the
+                // camera accelerates as it falls behind, and glides gently when close.
+                float adaptiveSmoothTime = smoothTime / (1f + dist * _distanceAccelFactor);
+                transform.position = Vector3.SmoothDamp(
+                    transform.position,
+                    targetPos,
+                    ref _velocity,
+                    adaptiveSmoothTime,
+                    maxSpeed);
+            }
         }
 
         private void ApplyOrthographicSize()

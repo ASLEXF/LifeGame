@@ -26,9 +26,11 @@ namespace ParticleLife.UI
     {
         [Header("UI 引用")]
         [SerializeField] private CanvasGroup      _canvasGroup;
+        [SerializeField] private TextMeshProUGUI  _titleText;
         [SerializeField] private TextMeshProUGUI  _survivalTimeText;
         [SerializeField] private TextMeshProUGUI  _peakCountText;
         [SerializeField] private Button           _restartButton;
+        [SerializeField] private TextMeshProUGUI  _restartButtonText;
 
         [Header("设置")]
         [SerializeField] private float _fadeDuration = 0.3f;
@@ -37,7 +39,9 @@ namespace ParticleLife.UI
         [SerializeField] private GameStateManager   _gameState;
         [SerializeField] private ParticleSimulation _simulation;
 
-        private bool _isVisible;
+        private bool  _isVisible;
+        private float _cachedSurvivalTime;
+        private int   _cachedPeakCount;
 
         private void Awake()
         {
@@ -50,12 +54,15 @@ namespace ParticleLife.UI
         {
             _gameState.OnStateChanged += OnStateChanged;
             _restartButton.onClick.AddListener(OnRestartClicked);
+            Localization.OnLanguageChanged += OnLanguageChangedHandler;
         }
 
         private void OnDestroy()
         {
             if (_gameState != null)
                 _gameState.OnStateChanged -= OnStateChanged;
+
+            Localization.OnLanguageChanged -= OnLanguageChangedHandler;
         }
 
         private void Update()
@@ -76,12 +83,14 @@ namespace ParticleLife.UI
 
         private void Show()
         {
-            _survivalTimeText.text = $"存活时间：{FormatTime(_gameState.SessionDuration)}";
-            _peakCountText.text    = $"峰值粒子数：{_gameState.PeakParticleCount}";
+            _cachedSurvivalTime = _gameState.SessionDuration;
+            _cachedPeakCount    = _gameState.PeakParticleCount;
 
             _canvasGroup.interactable   = true;
             _canvasGroup.blocksRaycasts = true;
             _isVisible = true;
+
+            RefreshText();
 
             StopAllCoroutines();
             StartCoroutine(FadeTo(1f));
@@ -105,6 +114,27 @@ namespace ParticleLife.UI
             _gameState.RestartSession();
         }
 
+        // ── Localization ──────────────────────────────────────────────────────
+
+        private void OnLanguageChangedHandler(Localization.Language _)
+        {
+            if (_isVisible) RefreshText();
+        }
+
+        private void RefreshText()
+        {
+            if (_titleText != null)
+                _titleText.text = Localization.Get("fail_title");
+
+            _survivalTimeText.text = string.Format(
+                Localization.Get("fail_survival"), Localization.FormatTime(_cachedSurvivalTime));
+            _peakCountText.text = string.Format(
+                Localization.Get("fail_peak"), _cachedPeakCount);
+
+            if (_restartButtonText != null)
+                _restartButtonText.text = Localization.Get("fail_restart");
+        }
+
         // ── Helpers ───────────────────────────────────────────────────────────
 
         private IEnumerator FadeTo(float target)
@@ -122,11 +152,5 @@ namespace ParticleLife.UI
             _canvasGroup.alpha = target;
         }
 
-        private static string FormatTime(float seconds)
-        {
-            int m = (int)(seconds / 60);
-            int s = (int)(seconds % 60);
-            return m > 0 ? $"{m}分{s:D2}秒" : $"{s}秒";
-        }
     }
 }

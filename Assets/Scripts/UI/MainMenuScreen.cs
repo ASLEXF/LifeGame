@@ -1,6 +1,5 @@
 using System.Collections;
 using ParticleLife.Management;
-using ParticleLife.Simulation;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -31,12 +30,13 @@ namespace ParticleLife.UI
     ///       │                    Raycast Target = false
     ///       ├── TitleGroup       Empty GameObject + CanvasGroup (_titleGroup)
     ///       │                    Anchored at 50%/60%, pivot 0.5/0.5
-    ///       │   ├── Text_Title   TMP 72pt Noto Sans SC Black #F0F0F0  "粒子生命"
+    ///       │   ├── Text_Title   TMP 72pt Noto Sans SC Black #F0F0F0  (_titleText)
     ///       │   └── Text_Sub     TMP 13pt Noto Sans SC Regular #8A9BA8 "v0.1.0"
     ///       ├── ButtonGroup      Empty GameObject + CanvasGroup (_buttonGroup)
     ///       │                    Vertical Layout Group, spacing 16, anchored 50%/42%
     ///       │   ├── Btn_Start    Button  (_startButton)  label "▶ 开始游戏"
-    ///       │   └── Btn_Config   Button  (_configButton) label "⚙ 配置引力矩阵"
+    ///       │   ├── Btn_Config   Button  (_configButton) label "⚙ 配置引力矩阵"
+    ///       │   └── Btn_Lang     Button  (_langButton)   label "EN"  ← 小号样式
     ///       ├── HintBar          Image #000 alpha 0.55, bottom strip, height 40
     ///       │   └── Text_Hint    TMP 12pt #6B7C87                    (_hintText)
     ///       └── BlackFade        Image #000 alpha 0, stretch full    (_blackFade)
@@ -45,13 +45,15 @@ namespace ParticleLife.UI
     ///   _rootGroup    → MainMenuRoot CanvasGroup
     ///   _titleGroup   → TitleGroup CanvasGroup
     ///   _titleRect    → TitleGroup RectTransform
+    ///   _titleText    → Text_Title TextMeshProUGUI
     ///   _buttonGroup  → ButtonGroup CanvasGroup
     ///   _blackFade    → BlackFade Image
     ///   _startButton  → Btn_Start Button
     ///   _configButton → Btn_Config Button
-    ///   _hintText     → Text_Hint TMP (optional — hidden if null)
-    ///   _gameState    → GameStateManager
-    ///   _simulation   → ParticleSimulation
+    ///   _langButton   → Btn_Lang Button (ButtonGroup 内，初始文字 "EN")
+    ///   _hintText       → Text_Hint TMP (optional — hidden if null)
+    ///   _gameState      → GameStateManager
+    ///   _matrixConfigUI → MatrixConfigUI component (same scene)
     /// ─────────────────────────────────────────────────────────────────────────
     /// </summary>
     public class MainMenuScreen : MonoBehaviour
@@ -77,8 +79,6 @@ namespace ParticleLife.UI
         // ── UI 文本常量 ───────────────────────────────────────────────────────
         // TODO: 接入本地化系统后替换为本地化键
 
-        private const string TextHintKeyboard = "按 Enter / Space 开始游戏";
-
         // ── Animation timing ──────────────────────────────────────────────────
 
         private const float FadeInDuration        = 1.2f;   // 整体 CanvasGroup 0→1
@@ -102,13 +102,17 @@ namespace ParticleLife.UI
         [Header("按钮引用")]
         [SerializeField] private Button _startButton;
         [SerializeField] private Button _configButton;
+        [SerializeField] private Button _langButton;
+
+        [Header("文本引用")]
+        [SerializeField] private TMPro.TextMeshProUGUI _titleText;
 
         [Header("可选引用")]
         [SerializeField] private TMPro.TextMeshProUGUI _hintText;
 
         [Header("游戏系统引用")]
         [SerializeField] private GameStateManager  _gameState;
-        [SerializeField] private ParticleSimulation _simulation;
+        [SerializeField] private MatrixConfigUI    _matrixConfigUI;
 
         // ── State machine ─────────────────────────────────────────────────────
 
@@ -149,11 +153,9 @@ namespace ParticleLife.UI
             _titleBaseY = _titleRect != null ? _titleRect.anchoredPosition.y : 0f;
 
             if (_hintText != null)
-            {
                 _hintText.color = ColorHint;
-                // TODO: 接入本地化系统后替换为本地化键查询
-                _hintText.text  = TextHintKeyboard;
-            }
+
+            ApplyLocalization();
         }
 
         private void Start()
@@ -166,6 +168,14 @@ namespace ParticleLife.UI
 
             // TODO: 配置引力矩阵界面尚未实现 — 按钮存在但不执行操作
             _configButton.onClick.AddListener(OnConfigClicked);
+
+            if (_langButton != null)
+                _langButton.onClick.AddListener(OnLangClicked);
+
+            if (_matrixConfigUI != null)
+                _matrixConfigUI.PanelVisibilityChanged += OnMatrixPanelVisibilityChanged;
+
+            Localization.OnLanguageChanged += OnLanguageChangedHandler;
 
             // If the game already starts at MainMenu (normal launch), begin fade-in.
             if (_gameState.CurrentState == GameState.MainMenu)
@@ -222,6 +232,11 @@ namespace ParticleLife.UI
         {
             if (_gameState != null)
                 _gameState.OnStateChanged -= OnStateChanged;
+
+            if (_matrixConfigUI != null)
+                _matrixConfigUI.PanelVisibilityChanged -= OnMatrixPanelVisibilityChanged;
+
+            Localization.OnLanguageChanged -= OnLanguageChangedHandler;
         }
 
         private void Update()
@@ -260,27 +275,81 @@ namespace ParticleLife.UI
 
         private void OnConfigClicked()
         {
-            // TODO: 配置引力矩阵界面尚未实现
-            Debug.Log("[MainMenuScreen] 配置引力矩阵界面尚未实现");
+            if (_menuState != MenuState.Idle) return;
+            _matrixConfigUI?.Toggle();
+        }
+
+        private void OnMatrixPanelVisibilityChanged(bool isVisible)
+        {
+            // Hide main menu while matrix panel is open, restore when closed.
+            if (isVisible)
+            {
+                _rootGroup.alpha          = 0f;
+                _rootGroup.interactable   = false;
+                _rootGroup.blocksRaycasts = false;
+            }
+            else if (_menuState == MenuState.Idle)
+            {
+                _rootGroup.alpha          = 1f;
+                _rootGroup.interactable   = true;
+                _rootGroup.blocksRaycasts = true;
+            }
         }
 
         // ── Start game trigger ────────────────────────────────────────────────
 
         /// <summary>
         /// Initiates the exit animation sequence. Safe to call multiple times — guarded
-        /// by the Idle state check. Reinitialize() is called immediately so the simulation
-        /// can begin resetting during the animation rather than after.
+        /// by the Idle state check. The simulation continues running as-is; no reset is applied.
         /// </summary>
         private void TriggerStartGame()
         {
             if (_menuState != MenuState.Idle) return;
             _menuState = MenuState.FadeOut;
 
-            // Reinitialize simulation at the start of the fade-out, not after it completes,
-            // so the reset work overlaps with the animation rather than adding to perceived load.
-            _simulation.Reinitialize();
+            _matrixConfigUI?.Hide();
 
             StartCoroutine(RunFadeOut());
+        }
+
+        // ── Language ──────────────────────────────────────────────────────────
+
+        private void OnLangClicked()
+        {
+            if (_menuState != MenuState.Idle) return;
+            Localization.SetLanguage(
+                Localization.Current == Localization.Language.Chinese
+                    ? Localization.Language.English
+                    : Localization.Language.Chinese);
+        }
+
+        private void OnLanguageChangedHandler(Localization.Language _) => ApplyLocalization();
+
+        private void ApplyLocalization()
+        {
+            if (_titleText != null)
+                _titleText.text = Localization.Get("title");
+
+            TMPro.TextMeshProUGUI startLabel = _startButton != null
+                ? _startButton.GetComponentInChildren<TMPro.TextMeshProUGUI>()
+                : null;
+            if (startLabel != null)
+                startLabel.text = Localization.Get("start");
+
+            TMPro.TextMeshProUGUI configLabel = _configButton != null
+                ? _configButton.GetComponentInChildren<TMPro.TextMeshProUGUI>()
+                : null;
+            if (configLabel != null)
+                configLabel.text = Localization.Get("config");
+
+            if (_hintText != null)
+                _hintText.text = Localization.Get("hint_keyboard");
+
+            TMPro.TextMeshProUGUI langLabel = _langButton != null
+                ? _langButton.GetComponentInChildren<TMPro.TextMeshProUGUI>()
+                : null;
+            if (langLabel != null)
+                langLabel.text = Localization.Get("lang_toggle");
         }
 
         // ── Animation coroutines ──────────────────────────────────────────────
@@ -307,12 +376,13 @@ namespace ParticleLife.UI
             if (_blackFade != null)
             {
                 Color startColor = _blackFade.color;
-                yield return new WaitForSecondsRealtime(1f);
                 yield return Tween(FadeInDuration, EaseOut, t =>
                 {
                     _blackFade.color = new Color(startColor.r, startColor.g, startColor.b,
                                                   Mathf.Lerp(1f, 0f, t));
                 });
+                Color c = _blackFade.color;
+                _blackFade.color = new Color(c.r, c.g, c.b, 0f);
             }
 
             // Phase 2a: wait before title drop.
@@ -397,11 +467,14 @@ namespace ParticleLife.UI
             if (_blackFade != null)
             {
                 Color startColor = _blackFade.color;
-                yield return Tween(ExitBlackFadeDuration, EaseOut, t =>
+                yield return Tween(ExitBlackFadeDuration, Linear, t =>
                 {
                     _blackFade.color = new Color(startColor.r, startColor.g, startColor.b,
-                                                  Mathf.Lerp(startColor.a, 0f, t));
+                                                  Mathf.Lerp(0f, 1f, t));
                 });
+
+                Color c = _blackFade.color;
+                _blackFade.color = new Color(c.r, c.g, c.b, 1f);
             }
 
             // Step 4: hand off to game systems.

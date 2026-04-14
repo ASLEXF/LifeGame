@@ -504,8 +504,14 @@ namespace ParticleLife.Simulation
         public float2 PlayerInputForce => _playerInputDir * _playerInputForce;
 
         /// <summary>Returns gravity parameters for typeA acting on typeB.</summary>
-        public Core.GravityEntry GetGravityEntry(int typeA, int typeB) =>
-            _gravityMatrix.Get(typeA, typeB);
+        public Core.GravityEntry GetGravityEntry(int typeA, int typeB)
+        {
+            int total = _gravityMatrix.TypeCount;
+            if (typeA < 0 || typeB < 0 || typeA >= total || typeB >= total)
+                return default;
+
+            return _gravityMatrix.Get(typeA, typeB);
+        }
 
         /// <summary>
         /// Writes a single gravity matrix entry. Physics takes effect the next FixedUpdate.
@@ -514,6 +520,12 @@ namespace ParticleLife.Simulation
         /// </summary>
         public void SetGravityEntry(int typeA, int typeB, Core.GravityEntry entry)
         {
+            CompletePendingJobIfNeeded();
+
+            int total = _gravityMatrix.TypeCount;
+            if (typeA < 0 || typeB < 0 || typeA >= total || typeB >= total)
+                return;
+
             var previous = _gravityMatrix.Get(typeA, typeB);
             _gravityMatrix.Set(typeA, typeB, entry);
 
@@ -531,12 +543,21 @@ namespace ParticleLife.Simulation
         /// </summary>
         public void ResetMatrixToDefault()
         {
+            CompletePendingJobIfNeeded();
+
             var def = Core.GravityMatrix.CreateDefault(_typeCount, Unity.Collections.Allocator.Temp);
             int n   = def.TypeCount;
             for (int a = 0; a < n; a++)
             for (int b = 0; b < n; b++)
                 SetGravityEntry(a, b, def.Get(a, b));
             def.Dispose();
+        }
+
+        private void CompletePendingJobIfNeeded()
+        {
+            if (!_jobPending) return;
+            _pendingHandle.Complete();
+            _jobPending = false;
         }
 
         /// <summary>Number of configurable (normal) particle types. Does NOT include black/white special types.</summary>

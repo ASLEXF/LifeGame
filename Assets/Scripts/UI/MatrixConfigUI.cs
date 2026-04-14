@@ -1,5 +1,7 @@
 using ParticleLife.Core;
+using ParticleLife.Management;
 using ParticleLife.Simulation;
+using System;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
@@ -37,9 +39,6 @@ namespace ParticleLife.UI
         [Header("引用")]
         [SerializeField] private ParticleSimulation _simulation;
 
-        // Saved initial state for Reset
-        private GravityEntry[] _initialEntries;
-
         // Per-cell slider references [typeA * typeCount + typeB]
         private Slider[] _attractionSliders;
         private Slider[] _repulsionSliders;
@@ -48,6 +47,10 @@ namespace ParticleLife.UI
         private VisualElement _panel;
         private UIDocument    _document;
         private bool          _isOpen;
+        private Font          _runtimeUiFont;
+        private StyleSheet    _matrixStyleSheet;
+        private int           _matrixSizeSnapshot;
+        public event Action<bool> PanelVisibilityChanged;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────
 
@@ -58,21 +61,40 @@ namespace ParticleLife.UI
 
         private void Start()
         {
-            // Snapshot initial matrix for Reset
-            int n = _simulation.TypeCount;
-            _initialEntries = new GravityEntry[n * n];
-            for (int a = 0; a < n; a++)
-            for (int b = 0; b < n; b++)
-                _initialEntries[a * n + b] = _simulation.GetGravityEntry(a, b);
-
             BuildUI();
             _panel.style.display = DisplayStyle.None;
+
+            Localization.OnLanguageChanged += OnLanguageChangedHandler;
+        }
+
+        private void OnDestroy()
+        {
+            Localization.OnLanguageChanged -= OnLanguageChangedHandler;
+        }
+
+        private void OnLanguageChangedHandler(Localization.Language _)
+        {
+            BuildUI();
+            _panel.style.display = _isOpen ? DisplayStyle.Flex : DisplayStyle.None;
         }
 
         private void Update()
         {
-            if (Keyboard.current.tabKey.wasPressedThisFrame)
+            Keyboard kb = Keyboard.current;
+            if (kb == null) return;
+
+            if (_matrixSizeSnapshot != _simulation.TotalTypeCount)
+            {
+                bool reopen = _isOpen;
+                BuildUI();
+                _isOpen = reopen;
+                _panel.style.display = reopen ? DisplayStyle.Flex : DisplayStyle.None;
+            }
+
+            if (kb.tabKey.wasPressedThisFrame)
                 Toggle();
+            if (_isOpen && kb.escapeKey.wasPressedThisFrame)
+                Hide();
         }
 
         // ── UI construction ───────────────────────────────────────────────────
@@ -81,8 +103,24 @@ namespace ParticleLife.UI
         {
             var root = _document.rootVisualElement;
             root.Clear();
+            root.style.flexGrow = 1f;
+            root.style.width = new Length(100f, LengthUnit.Percent);
+            root.style.height = new Length(100f, LengthUnit.Percent);
+            root.style.position = Position.Relative;
+            root.style.flexDirection = FlexDirection.Column;
+            EnsureRuntimeUiFont();
 
-            int n = _simulation.TypeCount;
+            if (_runtimeUiFont != null)
+                root.style.unityFontDefinition = FontDefinition.FromFont(_runtimeUiFont);
+
+            if (_matrixStyleSheet == null)
+                _matrixStyleSheet = Resources.Load<StyleSheet>("MatrixConfigUI");
+
+            if (_matrixStyleSheet != null && !HasStyleSheet(root, _matrixStyleSheet))
+                root.styleSheets.Add(_matrixStyleSheet);
+
+            int n = GetEditableTypeCount();
+            _matrixSizeSnapshot = _simulation.TotalTypeCount;
             _attractionSliders = new Slider[n * n];
             _repulsionSliders  = new Slider[n * n];
             _distanceSliders   = new Slider[n * n];
@@ -96,26 +134,44 @@ namespace ParticleLife.UI
             var header = new VisualElement();
             header.AddToClassList("header-row");
 
-            var title = new Label("引力矩阵配置");
+            var title = new Label(Localization.Get("matrix_title"));
             title.AddToClassList("panel-title");
             header.Add(title);
 
-            var randomizeBtn = new Button(OnRandomize) { text = "随机化" };
+            // Spacer pushes close button to the right
+            var spacer = new VisualElement();
+            spacer.style.flexGrow = 1;
+            header.Add(spacer);
+
+            var randomizeBtn = new Button(OnRandomize)
+            {
+                text    = Localization.Get("matrix_randomize"),
+                tooltip = Localization.Get("matrix_tip_randomize"),
+            };
             randomizeBtn.AddToClassList("action-button");
             header.Add(randomizeBtn);
 
-            var resetBtn = new Button(OnReset) { text = "重置" };
-            resetBtn.AddToClassList("action-button");
-            header.Add(resetBtn);
-
-            var defaultBtn = new Button(OnResetToDefaults) { text = "重置为默认" };
+            var defaultBtn = new Button(OnResetToDefaults)
+            {
+                text    = Localization.Get("matrix_reset_def"),
+                tooltip = Localization.Get("matrix_tip_reset_def"),
+            };
             defaultBtn.AddToClassList("action-button");
             header.Add(defaultBtn);
 
+            var closeBtn = new Button(Hide) { text = "✕" };
+            closeBtn.AddToClassList("close-button");
+            header.Add(closeBtn);
+
             _panel.Add(header);
 
+            // ── Keyboard hint ──────────────────────────────────────────────
+            var kbHint = new Label(Localization.Get("matrix_keyboard_hint"));
+            kbHint.AddToClassList("keyboard-hint");
+            _panel.Add(kbHint);
+
             // ── Grid hint label ────────────────────────────────────────────
-            var hint = new Label("行 = 施力方，列 = 受力方");
+            var hint = new Label(Localization.Get("matrix_hint"));
             hint.AddToClassList("grid-hint");
             _panel.Add(hint);
 
@@ -129,7 +185,7 @@ namespace ParticleLife.UI
                 var row = new VisualElement();
                 row.AddToClassList("matrix-row");
 
-                var rowLabel = new Label($"类型 {a}");
+                var rowLabel = new Label(string.Format(Localization.Get("matrix_type"), a));
                 rowLabel.AddToClassList("row-label");
                 row.Add(rowLabel);
 
@@ -149,49 +205,52 @@ namespace ParticleLife.UI
                     cell.Add(pairLabel);
 
                     // Attraction slider
-                    var attrSlider = new Slider("引力", -40f, 40f)
+                    var attrSlider = new Slider(Localization.Get("matrix_attraction"), -40f, 40f)
                     {
-                        value = entry.AttractionStrength,
+                        value = Mathf.Clamp(entry.AttractionStrength, -40f, 40f),
                         showInputField = true,
                     };
                     attrSlider.AddToClassList("attr-slider");
                     attrSlider.RegisterValueChangedCallback(evt =>
                     {
+                        if (!IsMatrixIndexValid(ia, ib)) return;
                         var e = _simulation.GetGravityEntry(ia, ib);
-                        e.AttractionStrength = evt.newValue;
+                        e.AttractionStrength = Mathf.Clamp(evt.newValue, -40f, 40f);
                         _simulation.SetGravityEntry(ia, ib, e);
-                        UpdateCellColor(cell, evt.newValue);
+                        UpdateCellColor(cell, e.AttractionStrength);
                     });
                     cell.Add(attrSlider);
                     _attractionSliders[idx] = attrSlider;
 
                     // Foldout for repulsion + distance
-                    var foldout = new Foldout { text = "高级", value = false };
+                    var foldout = new Foldout { text = Localization.Get("matrix_advanced"), value = false };
                     foldout.AddToClassList("cell-foldout");
 
-                    var repSlider = new Slider("斥力", 0f, 40f)
+                    var repSlider = new Slider(Localization.Get("matrix_repulsion"), 0f, 40f)
                     {
-                        value = entry.RepulsionStrength,
+                        value = Mathf.Clamp(entry.RepulsionStrength, 0f, 40f),
                         showInputField = true,
                     };
                     repSlider.RegisterValueChangedCallback(evt =>
                     {
+                        if (!IsMatrixIndexValid(ia, ib)) return;
                         var e = _simulation.GetGravityEntry(ia, ib);
-                        e.RepulsionStrength = evt.newValue;
+                        e.RepulsionStrength = Mathf.Clamp(evt.newValue, 0f, 40f);
                         _simulation.SetGravityEntry(ia, ib, e);
                     });
                     foldout.Add(repSlider);
                     _repulsionSliders[idx] = repSlider;
 
-                    var distSlider = new Slider("距离阈值", 1f, 10f)
+                    var distSlider = new Slider(Localization.Get("matrix_distance"), 1f, 10f)
                     {
-                        value = entry.DistanceThreshold,
+                        value = Mathf.Clamp(entry.DistanceThreshold, 1f, 10f),
                         showInputField = true,
                     };
                     distSlider.RegisterValueChangedCallback(evt =>
                     {
+                        if (!IsMatrixIndexValid(ia, ib)) return;
                         var e = _simulation.GetGravityEntry(ia, ib);
-                        e.DistanceThreshold = evt.newValue;
+                        e.DistanceThreshold = Mathf.Clamp(evt.newValue, 1f, 10f);
                         _simulation.SetGravityEntry(ia, ib, e);
                     });
                     foldout.Add(distSlider);
@@ -204,53 +263,85 @@ namespace ParticleLife.UI
                 grid.Add(row);
             }
 
-            _panel.Add(grid);
-            root.Add(_panel);
+            // Wrap grid in a ScrollView so the panel header stays fixed while
+            // the grid scrolls vertically when there are many particle types.
+            var scrollView = new ScrollView(ScrollViewMode.VerticalAndHorizontal);
+            scrollView.AddToClassList("grid-scroll");
+            scrollView.Add(grid);
+            _panel.Add(scrollView);
 
-            // Load USS
-            var uss = Resources.Load<StyleSheet>("MatrixConfigUI");
-            if (uss != null)
-                root.styleSheets.Add(uss);
+            root.Add(_panel);
         }
 
-        // ── Toggle ────────────────────────────────────────────────────────────
-
-        private void Toggle()
+        /// <summary>
+        /// Creates a runtime font with CJK coverage so UI Toolkit text can render
+        /// localized Chinese strings even when project font assets are limited.
+        /// </summary>
+        private void EnsureRuntimeUiFont()
         {
-            _isOpen = !_isOpen;
-            _panel.style.display = _isOpen ? DisplayStyle.Flex : DisplayStyle.None;
+            if (_runtimeUiFont != null) return;
+
+            string[] preferredFonts =
+            {
+                "Microsoft YaHei UI",
+                "Microsoft YaHei",
+                "SimHei",
+                "Arial Unicode MS",
+                "Segoe UI",
+            };
+
+            _runtimeUiFont = Font.CreateDynamicFontFromOSFont(preferredFonts, 16);
+        }
+
+        // ── Show / Hide / Toggle ──────────────────────────────────────────────
+
+        /// <summary>Shows the matrix config panel. No-op if already open.</summary>
+        public void Show()
+        {
+            if (_isOpen) return;
+            BuildUI();
+            _isOpen = true;
+            _panel.style.display = DisplayStyle.Flex;
+            PanelVisibilityChanged?.Invoke(true);
+        }
+
+        /// <summary>Hides the matrix config panel. No-op if already closed.</summary>
+        public void Hide()
+        {
+            if (_panel == null) return;
+            if (!_isOpen) return;
+            _isOpen = false;
+            _panel.style.display = DisplayStyle.None;
+            PanelVisibilityChanged?.Invoke(false);
+        }
+
+        /// <summary>Toggles the matrix config panel open/closed.</summary>
+        public void Toggle()
+        {
+            if (_panel == null) BuildUI();
+            if (_isOpen) Hide(); else Show();
         }
 
         // ── Buttons ───────────────────────────────────────────────────────────
 
         private void OnRandomize()
         {
-            int n   = _simulation.TypeCount;
+            int n   = GetEditableTypeCount();
             var rng = new System.Random();
 
             for (int a = 0; a < n; a++)
             for (int b = 0; b < n; b++)
             {
                 int idx = a * n + b;
+                float attraction = a == b
+                    ? (float)(rng.NextDouble() * 40.0)
+                    : (float)(rng.NextDouble() * 80.0 - 40.0);
                 var entry = new GravityEntry
                 {
-                    AttractionStrength = (float)(rng.NextDouble() * 80.0 - 40.0),
+                    AttractionStrength = attraction,
                     RepulsionStrength  = (float)(rng.NextDouble() * 20.0 + 2.0),
                     DistanceThreshold  = (float)(rng.NextDouble() * 7.0  + 1.0),
                 };
-                _simulation.SetGravityEntry(a, b, entry);
-                RefreshCell(idx, entry);
-            }
-        }
-
-        private void OnReset()
-        {
-            int n = _simulation.TypeCount;
-            for (int a = 0; a < n; a++)
-            for (int b = 0; b < n; b++)
-            {
-                int idx   = a * n + b;
-                var entry = _initialEntries[idx];
                 _simulation.SetGravityEntry(a, b, entry);
                 RefreshCell(idx, entry);
             }
@@ -265,7 +356,7 @@ namespace ParticleLife.UI
             _simulation.ResetMatrixToDefault();
 
             // Refresh all slider visuals to match the new default values.
-            int n = _simulation.TypeCount;
+            int n = GetEditableTypeCount();
             for (int a = 0; a < n; a++)
             for (int b = 0; b < n; b++)
             {
@@ -279,17 +370,20 @@ namespace ParticleLife.UI
 
         private void RefreshCell(int idx, GravityEntry entry)
         {
-            if (_attractionSliders[idx] != null)
-                _attractionSliders[idx].SetValueWithoutNotify(entry.AttractionStrength);
-            if (_repulsionSliders[idx] != null)
-                _repulsionSliders[idx].SetValueWithoutNotify(entry.RepulsionStrength);
-            if (_distanceSliders[idx] != null)
-                _distanceSliders[idx].SetValueWithoutNotify(entry.DistanceThreshold);
+            float attr = Mathf.Clamp(entry.AttractionStrength, -40f, 40f);
+            float rep  = Mathf.Clamp(entry.RepulsionStrength,  0f,   40f);
+            float dist = Mathf.Clamp(entry.DistanceThreshold,  1f,   10f);
 
-            // Also update cell background
+            if (_attractionSliders[idx] != null)
+                _attractionSliders[idx].SetValueWithoutNotify(attr);
+            if (_repulsionSliders[idx] != null)
+                _repulsionSliders[idx].SetValueWithoutNotify(rep);
+            if (_distanceSliders[idx] != null)
+                _distanceSliders[idx].SetValueWithoutNotify(dist);
+
             var cell = _attractionSliders[idx]?.parent;
             if (cell != null)
-                UpdateCellColor(cell, entry.AttractionStrength);
+                UpdateCellColor(cell, attr);
         }
 
         /// <summary>Interpolates cell background: blue (strong repulsion) → neutral → orange (strong attraction).</summary>
@@ -306,5 +400,30 @@ namespace ParticleLife.UI
 
             cell.style.backgroundColor = bg;
         }
+
+        private int GetEditableTypeCount()
+        {
+            // Matrix UI currently edits configurable normal types only.
+            // Clamp with total size for safety against transient size changes.
+            return Mathf.Min(_simulation.TypeCount, _simulation.TotalTypeCount);
+        }
+
+        private bool IsMatrixIndexValid(int typeA, int typeB)
+        {
+            int total = _simulation.TotalTypeCount;
+            return typeA >= 0 && typeB >= 0 && typeA < total && typeB < total;
+        }
+
+        private static bool HasStyleSheet(VisualElement root, StyleSheet styleSheet)
+        {
+            int count = root.styleSheets.count;
+            for (int i = 0; i < count; i++)
+            {
+                StyleSheet sheet = root.styleSheets[i];
+                if (sheet == styleSheet) return true;
+            }
+            return false;
+        }
+
     }
 }
