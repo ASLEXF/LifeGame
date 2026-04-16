@@ -96,11 +96,12 @@ namespace ParticleLife.Management
                     ["matrix_tip_reset_def"] = "还原为程序内置默认值（会自动保存）",
                     ["matrix_keyboard_hint"] = "[Tab] 切换面板    [Esc] 关闭",
                     ["matrix_config_loaded"] = "已自动读取 matrix_config.json",
+                    ["matrix_save_hint"]     = "已保存修改到 matrix_config.json",
                 },
                 [Language.English] = new Dictionary<string, string>
                 {
                     // ── Main Menu ──────────────────────────────────────
-                    ["title"]            = "Particle Life",
+                    ["title"]            = "Particle Life Game",
                     ["start"]            = "Start Game",
                     ["config"]           = "Configure Matrix",
                     ["hint_keyboard"]    = "Press Enter / Space to Start",
@@ -136,6 +137,7 @@ namespace ParticleLife.Management
                     ["matrix_tip_reset_def"] = "Restore built-in defaults (auto-saved)",
                     ["matrix_keyboard_hint"] = "[Tab] Toggle Panel    [Esc] Close",
                     ["matrix_config_loaded"] = "Loaded matrix_config.json",
+                    ["matrix_save_hint"]     = "Saved to matrix_config.json",
                 },
             };
     }

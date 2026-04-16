@@ -35,6 +35,9 @@ namespace ParticleLife.Persistence
         /// <summary>True if matrix_config.json was successfully loaded from disk on session start.</summary>
         public bool WasLoadedFromDisk { get; private set; }
 
+        /// <summary>Fired on the main thread immediately after a successful save to disk.</summary>
+        public event Action OnSaved;
+
         /// <summary>
         /// Editor  : &lt;ProjectRoot&gt;/matrix_config.json  (one level above Assets/)
         /// Build   : &lt;GameFolder&gt;/matrix_config.json   (same directory as the .exe)
@@ -121,6 +124,7 @@ namespace ParticleLife.Persistence
             {
                 string json = JsonUtility.ToJson(data, prettyPrint: true);
                 File.WriteAllText(SavePath, json);
+                OnSaved?.Invoke();
             }
             catch (Exception ex)
             {

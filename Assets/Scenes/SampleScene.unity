@@ -643,11 +643,11 @@ MonoBehaviour:
   _unboundedMode: 1
   _unboundedOrthoSize: 35
   _unboundedSmoothTime: 0.05
-  _unboundedMaxSpeed: 25
+  _unboundedMaxSpeed: 50
   _followStrength: 0.15
   _smoothTime: 0.5
   _maxSpeed: 50
-  _snapDistance: 15
+  _snapDistance: 20
   _distanceAccelFactor: 0.4
   _playerControl: {fileID: 83642376}
   _simulation: {fileID: 83642377}

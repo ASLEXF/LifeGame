@@ -52,6 +52,8 @@ namespace ParticleLife.UI
         private Font          _runtimeUiFont;
         private StyleSheet    _matrixStyleSheet;
         private int           _matrixSizeSnapshot;
+        private Label         _saveHintLabel;
+        private bool          _wasSaved;
         public event Action<bool> PanelVisibilityChanged;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────
@@ -67,11 +69,15 @@ namespace ParticleLife.UI
             _panel.style.display = DisplayStyle.None;
 
             Localization.OnLanguageChanged += OnLanguageChangedHandler;
+            if (_configPersistence != null)
+                _configPersistence.OnSaved += ShowSaveHint;
         }
 
         private void OnDestroy()
         {
             Localization.OnLanguageChanged -= OnLanguageChangedHandler;
+            if (_configPersistence != null)
+                _configPersistence.OnSaved -= ShowSaveHint;
         }
 
         private void OnLanguageChangedHandler(Localization.Language _)
@@ -141,12 +147,23 @@ namespace ParticleLife.UI
             spacer.AddToClassList("header-spacer");
             header.Add(spacer);
 
-            if (_configPersistence != null && _configPersistence.WasLoadedFromDisk)
+            _saveHintLabel = new Label();
+            _saveHintLabel.AddToClassList("config-loaded-hint");
+            if (_wasSaved)
             {
-                var loadedHint = new Label(Localization.Get("matrix_config_loaded"));
-                loadedHint.AddToClassList("config-loaded-hint");
-                header.Add(loadedHint);
+                _saveHintLabel.text = Localization.Get("matrix_save_hint");
+                _saveHintLabel.style.display = DisplayStyle.Flex;
             }
+            else if (_configPersistence != null && _configPersistence.WasLoadedFromDisk)
+            {
+                _saveHintLabel.text = Localization.Get("matrix_config_loaded");
+                _saveHintLabel.style.display = DisplayStyle.Flex;
+            }
+            else
+            {
+                _saveHintLabel.style.display = DisplayStyle.None;
+            }
+            header.Add(_saveHintLabel);
 
             var randomizeBtn = new Button(OnRandomize)
             {
@@ -369,6 +386,16 @@ namespace ParticleLife.UI
                 var entry = _simulation.GetGravityEntry(a, b);
                 RefreshCell(idx, entry);
             }
+        }
+
+        // ── Save hint ─────────────────────────────────────────────────────────
+
+        private void ShowSaveHint()
+        {
+            _wasSaved = true;
+            if (_saveHintLabel == null) return;
+            _saveHintLabel.text = Localization.Get("matrix_save_hint");
+            _saveHintLabel.style.display = DisplayStyle.Flex;
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

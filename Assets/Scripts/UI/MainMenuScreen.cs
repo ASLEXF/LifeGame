@@ -73,7 +73,7 @@ namespace ParticleLife.UI
         private static readonly Color ColorBtnFocus   = new Color(0.357f, 0.722f, 1f,     1f);
 
         /// <summary>底部提示文字颜色 #6B7C87</summary>
-        private static readonly Color ColorHint       = new Color(1f, 1f, 1f, 0.18f);
+        private static readonly Color ColorHint       = new Color(0.42f,  0.486f, 0.529f, 1f);
 
         // ── Animation timing ──────────────────────────────────────────────────
 

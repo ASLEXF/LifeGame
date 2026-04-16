@@ -712,6 +712,7 @@ namespace ParticleLife.Simulation
         /// </summary>
         public void SetPlayerOwned(int index, bool owned)
         {
+            CompletePendingJobIfNeeded();
             if ((uint)index < (uint)_particleCount)
                 _isPlayerOwned[index] = owned;
         }
