@@ -59,7 +59,6 @@ namespace ParticleLife.UI
     public class MainMenuScreen : MonoBehaviour
     {
         // ── Visual constants ──────────────────────────────────────────────────
-        // TODO: 接入本地化系统后替换所有硬编码字符串
 
         /// <summary>标题文字颜色 #F0F0F0</summary>
         private static readonly Color ColorTitle      = new Color(0.941f, 0.941f, 0.941f, 1f);
@@ -74,10 +73,7 @@ namespace ParticleLife.UI
         private static readonly Color ColorBtnFocus   = new Color(0.357f, 0.722f, 1f,     1f);
 
         /// <summary>底部提示文字颜色 #6B7C87</summary>
-        private static readonly Color ColorHint       = new Color(0.42f,  0.486f, 0.529f, 1f);
-
-        // ── UI 文本常量 ───────────────────────────────────────────────────────
-        // TODO: 接入本地化系统后替换为本地化键
+        private static readonly Color ColorHint       = new Color(1f, 1f, 1f, 0.18f);
 
         // ── Animation timing ──────────────────────────────────────────────────
 
@@ -166,7 +162,6 @@ namespace ParticleLife.UI
 
             _startButton.onClick.AddListener(OnStartClicked);
 
-            // TODO: 配置引力矩阵界面尚未实现 — 按钮存在但不执行操作
             _configButton.onClick.AddListener(OnConfigClicked);
 
             if (_langButton != null)

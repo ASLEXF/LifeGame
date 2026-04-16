@@ -1,5 +1,6 @@
 using ParticleLife.Core;
 using ParticleLife.Management;
+using ParticleLife.Persistence;
 using ParticleLife.Simulation;
 using System;
 using UnityEngine;
@@ -38,6 +39,7 @@ namespace ParticleLife.UI
     {
         [Header("引用")]
         [SerializeField] private ParticleSimulation _simulation;
+        [SerializeField] private ConfigPersistence  _configPersistence;
 
         // Per-cell slider references [typeA * typeCount + typeB]
         private Slider[] _attractionSliders;
@@ -103,11 +105,7 @@ namespace ParticleLife.UI
         {
             var root = _document.rootVisualElement;
             root.Clear();
-            root.style.flexGrow = 1f;
-            root.style.width = new Length(100f, LengthUnit.Percent);
-            root.style.height = new Length(100f, LengthUnit.Percent);
-            root.style.position = Position.Relative;
-            root.style.flexDirection = FlexDirection.Column;
+            root.AddToClassList("matrix-root");
             EnsureRuntimeUiFont();
 
             if (_runtimeUiFont != null)
@@ -138,10 +136,17 @@ namespace ParticleLife.UI
             title.AddToClassList("panel-title");
             header.Add(title);
 
-            // Spacer pushes close button to the right
+            // Spacer pushes hint + buttons to the right
             var spacer = new VisualElement();
-            spacer.style.flexGrow = 1;
+            spacer.AddToClassList("header-spacer");
             header.Add(spacer);
+
+            if (_configPersistence != null && _configPersistence.WasLoadedFromDisk)
+            {
+                var loadedHint = new Label(Localization.Get("matrix_config_loaded"));
+                loadedHint.AddToClassList("config-loaded-hint");
+                header.Add(loadedHint);
+            }
 
             var randomizeBtn = new Button(OnRandomize)
             {
@@ -327,7 +332,7 @@ namespace ParticleLife.UI
         private void OnRandomize()
         {
             int n   = GetEditableTypeCount();
-            var rng = new System.Random();
+            var rng = new Unity.Mathematics.Random((uint)System.Environment.TickCount);
 
             for (int a = 0; a < n; a++)
             for (int b = 0; b < n; b++)

@@ -32,6 +32,9 @@ namespace ParticleLife.Persistence
 
         private float _saveTimer = -1f; // -1 = not pending
 
+        /// <summary>True if matrix_config.json was successfully loaded from disk on session start.</summary>
+        public bool WasLoadedFromDisk { get; private set; }
+
         /// <summary>
         /// Editor  : &lt;ProjectRoot&gt;/matrix_config.json  (one level above Assets/)
         /// Build   : &lt;GameFolder&gt;/matrix_config.json   (same directory as the .exe)
@@ -57,6 +60,7 @@ namespace ParticleLife.Persistence
             LoadFromDisk();
             _simulation.OnGravityMatrixChanged += OnMatrixChanged;
         }
+
 
         private void OnDestroy()
         {
@@ -168,6 +172,7 @@ namespace ParticleLife.Persistence
             }
 
             _simulation.OnGravityMatrixChanged += OnMatrixChanged;
+            WasLoadedFromDisk = true;
         }
     }
 }

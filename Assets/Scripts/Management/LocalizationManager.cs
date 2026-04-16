@@ -61,8 +61,8 @@ namespace ParticleLife.Management
                 {
                     // ── Main Menu ──────────────────────────────────────
                     ["title"]            = "粒子生命",
-                    ["start"]            = "▶ 开始游戏",
-                    ["config"]           = "⚙ 配置引力矩阵",
+                    ["start"]            = "开始游戏",
+                    ["config"]           = "配置引力矩阵",
                     ["hint_keyboard"]    = "按 Enter / Space 开始游戏",
                     ["lang_toggle"]      = "EN",
 
@@ -95,13 +95,14 @@ namespace ParticleLife.Management
                     ["matrix_tip_randomize"] = "随机生成全部引力与斥力值",
                     ["matrix_tip_reset_def"] = "还原为程序内置默认值（会自动保存）",
                     ["matrix_keyboard_hint"] = "[Tab] 切换面板    [Esc] 关闭",
+                    ["matrix_config_loaded"] = "已自动读取 matrix_config.json",
                 },
                 [Language.English] = new Dictionary<string, string>
                 {
                     // ── Main Menu ──────────────────────────────────────
                     ["title"]            = "Particle Life",
-                    ["start"]            = "▶ Start Game",
-                    ["config"]           = "⚙ Configure Matrix",
+                    ["start"]            = "Start Game",
+                    ["config"]           = "Configure Matrix",
                     ["hint_keyboard"]    = "Press Enter / Space to Start",
                     ["lang_toggle"]      = "中文",
 
@@ -134,6 +135,7 @@ namespace ParticleLife.Management
                     ["matrix_tip_randomize"] = "Randomize all attraction and repulsion values",
                     ["matrix_tip_reset_def"] = "Restore built-in defaults (auto-saved)",
                     ["matrix_keyboard_hint"] = "[Tab] Toggle Panel    [Esc] Close",
+                    ["matrix_config_loaded"] = "Loaded matrix_config.json",
                 },
             };
     }

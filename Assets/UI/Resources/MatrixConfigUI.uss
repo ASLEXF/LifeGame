@@ -1,5 +1,32 @@
 /* MatrixConfigUI.uss — Gravity Matrix panel styles */
 
+/* ── Root container ───────────────────────────────────────────────── */
+
+.matrix-root {
+    flex-grow: 1;
+    width: 100%;
+    height: 100%;
+    position: relative;
+    flex-direction: column;
+}
+
+/* ── Header spacer ────────────────────────────────────────────────── */
+
+.header-spacer {
+    flex-grow: 1;
+}
+
+/* ── Config-loaded hint ───────────────────────────────────────────── */
+
+.config-loaded-hint {
+    font-size: 30px;
+    color: rgb(77, 217, 77);
+    align-self: center;
+    margin-right: 10px;
+}
+
+/* ── Panel ────────────────────────────────────────────────────────── */
+
 .matrix-panel {
     position: relative;
     margin-top: 12px;
@@ -96,12 +123,14 @@
 }
 
 .row-label {
-    width: 68px;
+    min-width: 90px;
     font-size: 18px;
     color: rgb(180, 180, 180);
     -unity-text-align: middle-right;
+    padding-left: 6px;
     padding-right: 6px;
     margin-top: 4px;
+    white-space: nowrap;
 }
 
 .matrix-cell {
