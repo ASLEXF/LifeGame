@@ -19,8 +19,8 @@
 /* ── Config-loaded hint ───────────────────────────────────────────── */
 
 .config-loaded-hint {
-    font-size: 30px;
-    color: rgb(77, 217, 77);
+    font-size: 36px;
+    color: rgb(255, 255, 255);
     align-self: center;
     margin-right: 10px;
 }
@@ -146,22 +146,52 @@
     transition-duration: 0.15s;
 }
 
-.cell-label {
-    font-size: 16px;
-    color: rgb(160, 160, 160);
+.cell-header {
+    flex-direction: row;
+    align-items: center;
     margin-bottom: 6px;
 }
 
+.cell-label {
+    font-size: 16px;
+    color: rgb(160, 160, 160);
+}
+
+.cell-attr-header-label {
+    flex-grow: 1;
+    font-size: 16px;
+    color: rgb(200, 200, 200);
+    margin-left: 6px;
+}
+
+.cell-advanced-toggle {
+    font-size: 14px;
+    min-height: 26px;
+    padding: 2px 8px;
+    background-color: rgba(50, 50, 50, 0.7);
+    border-color: rgba(140, 140, 140, 0.6);
+    border-width: 1px;
+    border-radius: 3px;
+    color: rgb(160, 160, 160);
+}
+
+.cell-advanced-toggle:hover {
+    background-color: rgba(80, 80, 80, 0.8);
+    color: rgb(200, 200, 200);
+}
+
+.cell-advanced-content {
+    flex-direction: row;
+    margin-top: 4px;
+}
+
 .attr-slider {
-    margin-bottom: 8px;
-    min-height: 34px;
+    margin-bottom: 0px;
+    min-height: 30px;
 }
 
 .attr-slider > Label {
-    font-size: 16px;
-    color: rgb(200, 200, 200);
-    min-width: 88px;
-    max-width: 88px;
+    display: none;
 }
 
 .attr-slider .unity-base-field__input {
@@ -170,27 +200,22 @@
     font-size: 16px;
 }
 
-.cell-foldout > Toggle > Label {
-    font-size: 16px;
-    color: rgb(160, 160, 160);
-}
-
-.cell-foldout Slider > Label {
-    font-size: 16px;
+.cell-advanced-content Slider > Label {
+    font-size: 14px;
     color: rgb(200, 200, 200);
-    min-width: 88px;
-    max-width: 88px;
+    min-width: 50px;
+    max-width: 60px;
 }
 
-.cell-foldout Slider {
+.cell-advanced-content Slider {
     min-height: 34px;
-    margin-top: 4px;
+    margin-top: 0;
 }
 
-.cell-foldout Slider .unity-base-field__input {
-    min-width: 96px;
-    max-width: 112px;
-    font-size: 16px;
+.cell-advanced-content Slider .unity-base-field__input {
+    min-width: 55px;
+    max-width: 65px;
+    font-size: 14px;
 }
 
 .matrix-cell .unity-base-field__input {
@@ -211,4 +236,116 @@
 .matrix-cell Slider .unity-base-slider__input {
     flex-grow: 1;
     min-width: 120px;
+}
+
+/* ── Preset section ──────────────────────────────────────────────────── */
+
+/* preset-section class retained for potential future use */
+
+.preset-foldout {
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+.preset-foldout > Toggle {
+    font-size: 28px;
+    color: rgb(160, 160, 160);
+    padding-top: 4px;
+    padding-bottom: 4px;
+    padding-left: 10px;
+    padding-right: 10px;
+    border-width: 1px;
+    border-color: rgba(140, 140, 140, 0.5);
+    border-radius: 4px;
+    background-color: rgba(50, 50, 50, 0.4);
+}
+
+.preset-foldout > Toggle > Label {
+    font-size: 28px;
+    color: rgb(160, 160, 160);
+}
+
+.preset-foldout #unity-content {
+    padding: 6px 8px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-radius: 0 0 4px 4px;
+}
+
+.preset-input-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.preset-name-field {
+    flex-grow: 1;
+    margin-right: 6px;
+}
+
+.preset-name-field > Label {
+    font-size: 28px;
+    color: rgb(150, 150, 150);
+    min-width: 130px;
+    max-width: 200px;
+}
+
+.preset-name-field .unity-base-field__input {
+    font-size: 28px;
+    flex-grow: 1;
+}
+
+.preset-list-container {
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+.preset-item-row {
+    flex-direction: row;
+    align-items: center;
+    margin-right: 8px;
+    margin-bottom: 4px;
+    padding: 4px 6px;
+    background-color: rgba(50, 50, 50, 0.5);
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: rgba(120, 120, 120, 0.3);
+}
+
+.preset-item-name {
+    flex-grow: 1;
+    font-size: 28px;
+    color: rgb(200, 200, 200);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-right: 6px;
+}
+
+.preset-item-button {
+    margin-left: 4px;
+    padding: 8px 16px;
+    background-color: rgba(60, 60, 60, 0.9);
+    border-color: rgba(120, 120, 120, 0.6);
+    border-width: 1px;
+    border-radius: 4px;
+    color: rgb(200, 200, 200);
+    font-size: 28px;
+}
+
+.preset-item-button:hover {
+    background-color: rgba(90, 90, 90, 0.9);
+}
+
+.preset-delete-button {
+    background-color: rgba(100, 50, 50, 0.9);
+    border-color: rgba(180, 100, 100, 0.6);
+}
+
+.preset-delete-button:hover {
+    background-color: rgba(140, 60, 60, 0.9);
+}
+
+.preset-empty-label {
+    font-size: 28px;
+    color: rgb(110, 110, 110);
 }

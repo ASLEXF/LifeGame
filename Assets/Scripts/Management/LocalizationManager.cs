@@ -97,6 +97,15 @@ namespace ParticleLife.Management
                     ["matrix_keyboard_hint"] = "[Tab] 切换面板    [Esc] 关闭",
                     ["matrix_config_loaded"] = "已自动读取 matrix_config.json",
                     ["matrix_save_hint"]     = "已保存修改到 matrix_config.json",
+
+                    // ── Preset Management ──────────────────────────────
+                    ["preset_section"]   = "预设管理",
+                    ["preset_name_ph"]   = "输入预设名称",
+                    ["preset_save"]      = "保存预设",
+                    ["preset_load"]      = "加载",
+                    ["preset_delete"]    = "删除",
+                    ["preset_empty"]     = "暂无预设",
+                    ["preset_saved"]     = "预设已保存",
                 },
                 [Language.English] = new Dictionary<string, string>
                 {
@@ -138,6 +147,15 @@ namespace ParticleLife.Management
                     ["matrix_keyboard_hint"] = "[Tab] Toggle Panel    [Esc] Close",
                     ["matrix_config_loaded"] = "Loaded matrix_config.json",
                     ["matrix_save_hint"]     = "Saved to matrix_config.json",
+
+                    // ── Preset Management ──────────────────────────────
+                    ["preset_section"]   = "Presets",
+                    ["preset_name_ph"]   = "Preset name",
+                    ["preset_save"]      = "Save Preset",
+                    ["preset_load"]      = "Load",
+                    ["preset_delete"]    = "Del",
+                    ["preset_empty"]     = "No presets saved",
+                    ["preset_saved"]     = "Preset Saved",
                 },
             };
     }

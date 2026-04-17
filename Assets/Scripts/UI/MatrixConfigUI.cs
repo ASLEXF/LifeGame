@@ -54,6 +54,9 @@ namespace ParticleLife.UI
         private int           _matrixSizeSnapshot;
         private Label         _saveHintLabel;
         private bool          _wasSaved;
+        private Button        _presetSaveButton;
+        private VisualElement _presetListContainer;
+        private TextField     _presetNameField;
         public event Action<bool> PanelVisibilityChanged;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────
@@ -69,15 +72,11 @@ namespace ParticleLife.UI
             _panel.style.display = DisplayStyle.None;
 
             Localization.OnLanguageChanged += OnLanguageChangedHandler;
-            if (_configPersistence != null)
-                _configPersistence.OnSaved += ShowSaveHint;
         }
 
         private void OnDestroy()
         {
             Localization.OnLanguageChanged -= OnLanguageChangedHandler;
-            if (_configPersistence != null)
-                _configPersistence.OnSaved -= ShowSaveHint;
         }
 
         private void OnLanguageChangedHandler(Localization.Language _)
@@ -151,7 +150,7 @@ namespace ParticleLife.UI
             _saveHintLabel.AddToClassList("config-loaded-hint");
             if (_wasSaved)
             {
-                _saveHintLabel.text = Localization.Get("matrix_save_hint");
+                _saveHintLabel.text = Localization.Get("preset_saved");
                 _saveHintLabel.style.display = DisplayStyle.Flex;
             }
             else if (_configPersistence != null && _configPersistence.WasLoadedFromDisk)
@@ -164,6 +163,12 @@ namespace ParticleLife.UI
                 _saveHintLabel.style.display = DisplayStyle.None;
             }
             header.Add(_saveHintLabel);
+
+            var presetBtnPresets = PresetPersistence.GetPresets();
+            _presetSaveButton = new Button(OnPresetSave) { text = Localization.Get("preset_save") };
+            _presetSaveButton.AddToClassList("action-button");
+            _presetSaveButton.SetEnabled(presetBtnPresets.Count < PresetPersistence.MaxPresets);
+            header.Add(_presetSaveButton);
 
             var randomizeBtn = new Button(OnRandomize)
             {
@@ -191,6 +196,9 @@ namespace ParticleLife.UI
             var kbHint = new Label(Localization.Get("matrix_keyboard_hint"));
             kbHint.AddToClassList("keyboard-hint");
             _panel.Add(kbHint);
+
+            // ── Preset section ─────────────────────────────────────────────
+            _panel.Add(BuildPresetSection());
 
             // ── Grid hint label ────────────────────────────────────────────
             var hint = new Label(Localization.Get("matrix_hint"));
@@ -221,13 +229,34 @@ namespace ParticleLife.UI
                     cell.AddToClassList("matrix-cell");
                     UpdateCellColor(cell, entry.AttractionStrength);
 
-                    // Pair label
+                    // Cell header: pair label (left) + advanced toggle (top-right)
+                    var cellHeader = new VisualElement();
+                    cellHeader.AddToClassList("cell-header");
+
                     var pairLabel = new Label($"{a}→{b}");
                     pairLabel.AddToClassList("cell-label");
-                    cell.Add(pairLabel);
+                    cellHeader.Add(pairLabel);
+
+                    var attrHeaderLabel = new Label(Localization.Get("matrix_attraction"));
+                    attrHeaderLabel.AddToClassList("cell-attr-header-label");
+                    cellHeader.Add(attrHeaderLabel);
+
+                    var advancedContent = new VisualElement();
+                    advancedContent.AddToClassList("cell-advanced-content");
+                    advancedContent.style.display = DisplayStyle.None;
+
+                    var advancedToggle = new Button(() =>
+                    {
+                        bool showing = advancedContent.style.display == DisplayStyle.Flex;
+                        advancedContent.style.display = showing ? DisplayStyle.None : DisplayStyle.Flex;
+                    })
+                    { text = Localization.Get("matrix_advanced") };
+                    advancedToggle.AddToClassList("cell-advanced-toggle");
+                    cellHeader.Add(advancedToggle);
+                    cell.Add(cellHeader);
 
                     // Attraction slider
-                    var attrSlider = new Slider(Localization.Get("matrix_attraction"), -40f, 40f)
+                    var attrSlider = new Slider("", -40f, 40f)
                     {
                         value = Mathf.Clamp(entry.AttractionStrength, -40f, 40f),
                         showInputField = true,
@@ -244,15 +273,15 @@ namespace ParticleLife.UI
                     cell.Add(attrSlider);
                     _attractionSliders[idx] = attrSlider;
 
-                    // Foldout for repulsion + distance
-                    var foldout = new Foldout { text = Localization.Get("matrix_advanced"), value = false };
-                    foldout.AddToClassList("cell-foldout");
-
+                    // Advanced content: repulsion + distance sliders (horizontal)
                     var repSlider = new Slider(Localization.Get("matrix_repulsion"), 0f, 40f)
                     {
                         value = Mathf.Clamp(entry.RepulsionStrength, 0f, 40f),
                         showInputField = true,
                     };
+                    repSlider.style.width = StyleKeyword.Auto;
+                    repSlider.style.flexGrow = 1;
+                    repSlider.style.marginRight = 4;
                     repSlider.RegisterValueChangedCallback(evt =>
                     {
                         if (!IsMatrixIndexValid(ia, ib)) return;
@@ -260,7 +289,7 @@ namespace ParticleLife.UI
                         e.RepulsionStrength = Mathf.Clamp(evt.newValue, 0f, 40f);
                         _simulation.SetGravityEntry(ia, ib, e);
                     });
-                    foldout.Add(repSlider);
+                    advancedContent.Add(repSlider);
                     _repulsionSliders[idx] = repSlider;
 
                     var distSlider = new Slider(Localization.Get("matrix_distance"), 1f, 10f)
@@ -268,6 +297,8 @@ namespace ParticleLife.UI
                         value = Mathf.Clamp(entry.DistanceThreshold, 1f, 10f),
                         showInputField = true,
                     };
+                    distSlider.style.width = StyleKeyword.Auto;
+                    distSlider.style.flexGrow = 1;
                     distSlider.RegisterValueChangedCallback(evt =>
                     {
                         if (!IsMatrixIndexValid(ia, ib)) return;
@@ -275,10 +306,10 @@ namespace ParticleLife.UI
                         e.DistanceThreshold = Mathf.Clamp(evt.newValue, 1f, 10f);
                         _simulation.SetGravityEntry(ia, ib, e);
                     });
-                    foldout.Add(distSlider);
+                    advancedContent.Add(distSlider);
                     _distanceSliders[idx] = distSlider;
 
-                    cell.Add(foldout);
+                    cell.Add(advancedContent);
                     row.Add(cell);
                 }
 
@@ -388,13 +419,108 @@ namespace ParticleLife.UI
             }
         }
 
+        // ── Preset section ────────────────────────────────────────────────────
+
+        private VisualElement BuildPresetSection()
+        {
+            var foldout = new Foldout { text = Localization.Get("preset_section"), value = false };
+            foldout.AddToClassList("preset-foldout");
+
+            // Name input row (save button is in the header)
+            var inputRow = new VisualElement();
+            inputRow.AddToClassList("preset-input-row");
+            _presetNameField = new TextField(Localization.Get("preset_name_ph"));
+            _presetNameField.AddToClassList("preset-name-field");
+            inputRow.Add(_presetNameField);
+            foldout.Add(inputRow);
+
+            _presetListContainer = new VisualElement();
+            _presetListContainer.AddToClassList("preset-list-container");
+            foldout.Add(_presetListContainer);
+
+            RefreshPresetList(PresetPersistence.GetPresets());
+            return foldout;
+        }
+
+        private void RefreshPresetList(System.Collections.Generic.List<PresetPersistence.PresetEntry> presets = null)
+        {
+            presets ??= PresetPersistence.GetPresets();
+            _presetListContainer.Clear();
+
+            if (_presetSaveButton != null)
+                _presetSaveButton.SetEnabled(presets.Count < PresetPersistence.MaxPresets);
+
+            if (presets.Count == 0)
+            {
+                var empty = new Label(Localization.Get("preset_empty"));
+                empty.AddToClassList("preset-empty-label");
+                _presetListContainer.Add(empty);
+                return;
+            }
+
+            int currentTypeCount = _simulation.TypeCount;
+            for (int i = 0; i < presets.Count; i++)
+            {
+                int capturedIndex = i;
+                var entry         = presets[i];
+                bool compatible   = entry.typeCount == currentTypeCount;
+
+                var row = new VisualElement();
+                row.AddToClassList("preset-item-row");
+
+                string displayName = compatible
+                    ? entry.name
+                    : $"{entry.name}  ({entry.typeCount}型)";
+                var nameLabel = new Label(displayName);
+                nameLabel.AddToClassList("preset-item-name");
+                if (!compatible)
+                    nameLabel.style.color = new UnityEngine.Color(0.55f, 0.55f, 0.55f);
+                row.Add(nameLabel);
+
+                var loadBtn = new Button(() =>
+                {
+                    if (!PresetPersistence.TryApplyPreset(entry, _simulation)) return;
+                    int n = GetEditableTypeCount();
+                    for (int a = 0; a < n; a++)
+                    for (int b = 0; b < n; b++)
+                        RefreshCell(a * n + b, _simulation.GetGravityEntry(a, b));
+                })
+                { text = Localization.Get("preset_load") };
+                loadBtn.AddToClassList("preset-item-button");
+                loadBtn.SetEnabled(compatible);
+                row.Add(loadBtn);
+
+                var deleteBtn = new Button(() =>
+                {
+                    PresetPersistence.DeletePreset(capturedIndex);
+                    RefreshPresetList();
+                })
+                { text = Localization.Get("preset_delete") };
+                deleteBtn.AddToClassList("preset-item-button");
+                deleteBtn.AddToClassList("preset-delete-button");
+                row.Add(deleteBtn);
+
+                _presetListContainer.Add(row);
+            }
+        }
+
+        private void OnPresetSave()
+        {
+            string name = _presetNameField?.value ?? "";
+            if (!PresetPersistence.TrySavePreset(name, _simulation)) return;
+            if (_presetNameField != null)
+                _presetNameField.value = "";
+            ShowSaveHint();
+            RefreshPresetList();
+        }
+
         // ── Save hint ─────────────────────────────────────────────────────────
 
         private void ShowSaveHint()
         {
             _wasSaved = true;
             if (_saveHintLabel == null) return;
-            _saveHintLabel.text = Localization.Get("matrix_save_hint");
+            _saveHintLabel.text = Localization.Get("preset_saved");
             _saveHintLabel.style.display = DisplayStyle.Flex;
         }
 

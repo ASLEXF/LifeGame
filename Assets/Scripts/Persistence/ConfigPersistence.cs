@@ -30,7 +30,6 @@ namespace ParticleLife.Persistence
 
         private const string FileName = "matrix_config.json";
 
-        private float _saveTimer = -1f; // -1 = not pending
 
         /// <summary>True if matrix_config.json was successfully loaded from disk on session start.</summary>
         public bool WasLoadedFromDisk { get; private set; }
@@ -61,39 +60,9 @@ namespace ParticleLife.Persistence
         private void Start()
         {
             LoadFromDisk();
-            _simulation.OnGravityMatrixChanged += OnMatrixChanged;
         }
 
-
-        private void OnDestroy()
-        {
-            if (_simulation != null)
-                _simulation.OnGravityMatrixChanged -= OnMatrixChanged;
-
-            // Flush any pending save immediately on shutdown
-            if (_saveTimer >= 0f)
-                SaveToDisk();
-        }
-
-        private void Update()
-        {
-            if (_saveTimer < 0f) return;
-
-            _saveTimer -= Time.deltaTime;
-            if (_saveTimer <= 0f)
-            {
-                _saveTimer = -1f;
-                SaveToDisk();
-            }
-        }
-
-        // ── Event handler ─────────────────────────────────────────────────────
-
-        private void OnMatrixChanged()
-        {
-            // Reset debounce timer every time a change arrives
-            _saveTimer = _saveDebounceSeconds;
-        }
+        private void OnDestroy() { }
 
         // ── IO ────────────────────────────────────────────────────────────────
 
@@ -158,10 +127,6 @@ namespace ParticleLife.Persistence
                 return; // Keep simulation defaults
             }
 
-            // Apply — suppress save triggered by these SetGravityEntry calls
-            _saveTimer = -1f;
-            _simulation.OnGravityMatrixChanged -= OnMatrixChanged;
-
             int typeCount = data.typeCount;
             for (int a = 0; a < typeCount; a++)
             for (int b = 0; b < typeCount; b++)
@@ -175,7 +140,6 @@ namespace ParticleLife.Persistence
                 });
             }
 
-            _simulation.OnGravityMatrixChanged += OnMatrixChanged;
             WasLoadedFromDisk = true;
         }
     }
