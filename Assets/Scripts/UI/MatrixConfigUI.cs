@@ -56,7 +56,6 @@ namespace ParticleLife.UI
         private bool          _wasSaved;
         private Button        _presetSaveButton;
         private VisualElement _presetListContainer;
-        private TextField     _presetNameField;
         public event Action<bool> PanelVisibilityChanged;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────
@@ -426,14 +425,6 @@ namespace ParticleLife.UI
             var foldout = new Foldout { text = Localization.Get("preset_section"), value = false };
             foldout.AddToClassList("preset-foldout");
 
-            // Name input row (save button is in the header)
-            var inputRow = new VisualElement();
-            inputRow.AddToClassList("preset-input-row");
-            _presetNameField = new TextField(Localization.Get("preset_name_ph"));
-            _presetNameField.AddToClassList("preset-name-field");
-            inputRow.Add(_presetNameField);
-            foldout.Add(inputRow);
-
             _presetListContainer = new VisualElement();
             _presetListContainer.AddToClassList("preset-list-container");
             foldout.Add(_presetListContainer);
@@ -506,10 +497,7 @@ namespace ParticleLife.UI
 
         private void OnPresetSave()
         {
-            string name = _presetNameField?.value ?? "";
-            if (!PresetPersistence.TrySavePreset(name, _simulation)) return;
-            if (_presetNameField != null)
-                _presetNameField.value = "";
+            if (!PresetPersistence.TrySavePreset("", _simulation)) return;
             ShowSaveHint();
             RefreshPresetList();
         }

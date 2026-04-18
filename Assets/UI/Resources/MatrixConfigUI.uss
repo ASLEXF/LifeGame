@@ -197,7 +197,7 @@
 .attr-slider .unity-base-field__input {
     min-width: 96px;
     max-width: 112px;
-    font-size: 16px;
+    font-size: 18px;
 }
 
 .cell-advanced-content Slider > Label {
@@ -215,11 +215,12 @@
 .cell-advanced-content Slider .unity-base-field__input {
     min-width: 55px;
     max-width: 65px;
-    font-size: 14px;
+    font-size: 16px;
 }
 
 .matrix-cell .unity-base-field__input {
     -unity-text-align: middle-right;
+    color: rgb(255, 220, 50);
 }
 
 /* Force slider internals to reserve space and avoid overlap */
@@ -271,28 +272,6 @@
     border-radius: 0 0 4px 4px;
 }
 
-.preset-input-row {
-    flex-direction: row;
-    align-items: center;
-    margin-bottom: 6px;
-}
-
-.preset-name-field {
-    flex-grow: 1;
-    margin-right: 6px;
-}
-
-.preset-name-field > Label {
-    font-size: 28px;
-    color: rgb(150, 150, 150);
-    min-width: 130px;
-    max-width: 200px;
-}
-
-.preset-name-field .unity-base-field__input {
-    font-size: 28px;
-    flex-grow: 1;
-}
 
 .preset-list-container {
     flex-direction: row;

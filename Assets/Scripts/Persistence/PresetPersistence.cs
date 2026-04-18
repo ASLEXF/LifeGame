@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using ParticleLife.Core;
+using ParticleLife.Management;
 using ParticleLife.Simulation;
 using UnityEngine;
 
@@ -66,7 +67,7 @@ namespace ParticleLife.Persistence
             int size = n * n;
             var entry = new PresetEntry
             {
-                name                = string.IsNullOrWhiteSpace(name) ? $"预设 {presets.Count + 1}" : name,
+                name                = string.IsNullOrWhiteSpace(name) ? string.Format(Localization.Get("preset_default_name"), presets.Count + 1) : name,
                 typeCount           = n,
                 attractionStrengths = new float[size],
                 repulsionStrengths  = new float[size],

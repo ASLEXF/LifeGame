@@ -100,7 +100,8 @@ namespace ParticleLife.Management
 
                     // ── Preset Management ──────────────────────────────
                     ["preset_section"]   = "预设管理",
-                    ["preset_name_ph"]   = "输入预设名称",
+                    ["preset_default_name"] = "预设 {0}",
+
                     ["preset_save"]      = "保存预设",
                     ["preset_load"]      = "加载",
                     ["preset_delete"]    = "删除",
@@ -150,7 +151,8 @@ namespace ParticleLife.Management
 
                     // ── Preset Management ──────────────────────────────
                     ["preset_section"]   = "Presets",
-                    ["preset_name_ph"]   = "Preset name",
+                    ["preset_default_name"] = "Preset {0}",
+
                     ["preset_save"]      = "Save Preset",
                     ["preset_load"]      = "Load",
                     ["preset_delete"]    = "Del",
