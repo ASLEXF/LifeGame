@@ -488,8 +488,10 @@ MonoBehaviour:
   _shieldCooldown: 0
   _shieldPlayerRepulsionScale: 15
   _scatterFraction: 0.2
+  _scatterImpulse: 8
   _input: {fileID: 83642379}
   _simulation: {fileID: 83642377}
+  _playerControl: {fileID: 83642376}
 --- !u!1 &519420028
 GameObject:
   m_ObjectHideFlags: 0
@@ -1108,11 +1110,14 @@ MonoBehaviour:
   _survivalTimeText: {fileID: 1200010212}
   _captureSlider: {fileID: 1200010402}
   _skillSlider: {fileID: 1262035584}
+  _dangerOverlay: {fileID: 0}
+  _dangerFadeOutRate: 2
   _gameState: {fileID: 2072673226}
   _playerControl: {fileID: 83642376}
   _captureDetection: {fileID: 1200010010}
   _clusterDetector: {fileID: 83642381}
   _playerSkill: {fileID: 83642382}
+  _matrixConfigUI: {fileID: 1200010023}
 --- !u!1 &1200010200
 GameObject:
   m_ObjectHideFlags: 0

@@ -5,7 +5,7 @@ using UnityEngine;
 namespace ParticleLife.Player
 {
     /// <summary>
-    /// Manages the gravity-shield skill activated by the F key.
+    /// Manages the gravity-shield skill activated by the Space key.
     ///
     /// State machine:
     ///   Ready    → [F pressed]  → Active   (shield on, duration countdown)
@@ -28,10 +28,13 @@ namespace ParticleLife.Player
         [SerializeField] private float _shieldPlayerRepulsionScale = 5f;
         [Tooltip("技能激活时转化为随机普通类型的玩家粒子比例（0–1）。0.2 = 约 20%")]
         [SerializeField][Range(0f, 1f)] private float _scatterFraction = 0.2f;
+        [Tooltip("散射粒子从玩家质心向外获得的速度冲量。0 = 无视觉脉冲效果。")]
+        [SerializeField] private float _scatterImpulse = 8f;
 
         [Header("引用")]
         [SerializeField] private GameInput          _input;
         [SerializeField] private ParticleSimulation _simulation;
+        [SerializeField] private PlayerControl      _playerControl;
 
         /// <summary>True while the shield is active.</summary>
         public bool  IsShieldActive        { get; private set; }
@@ -74,7 +77,11 @@ namespace ParticleLife.Player
             IsShieldActive      = true;
             ShieldTimeRemaining = _shieldDuration;
             _simulation.SetShieldActive(true, _shieldPlayerRepulsionScale);
-            _simulation.RequestScatterPlayerParticles(_scatterFraction);
+
+            Unity.Mathematics.float2 centroid = _playerControl != null
+                ? _playerControl.ClusterCentroid
+                : default;
+            _simulation.RequestScatterPlayerParticles(_scatterFraction, centroid, _scatterImpulse);
         }
 
         private void Deactivate()

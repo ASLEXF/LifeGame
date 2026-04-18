@@ -162,8 +162,10 @@ namespace ParticleLife.Simulation
 
         // Scatter request: set via RequestScatterPlayerParticles(), consumed in FixedUpdate
         // after the pending job is completed (NativeArray write safety).
-        private bool  _pendingScatter;
-        private float _pendingScatterFraction;
+        private bool   _pendingScatter;
+        private float  _pendingScatterFraction;
+        private float2 _pendingScatterCentroid;
+        private float  _pendingScatterImpulse;
 
         // ── Runtime matrix editing ────────────────────────────────────────────
         private bool _cellSizeDirty;
@@ -274,7 +276,7 @@ namespace ParticleLife.Simulation
             // Execute deferred scatter (requested by PlayerSkill.Activate on the Update thread).
             if (_pendingScatter)
             {
-                ExecuteScatterPlayerParticles(_pendingScatterFraction);
+                ExecuteScatterPlayerParticles(_pendingScatterFraction, _pendingScatterCentroid, _pendingScatterImpulse);
                 _pendingScatter = false;
             }
 
@@ -631,10 +633,12 @@ namespace ParticleLife.Simulation
         /// player-owned particles into random non-special types. Executes safely at the
         /// start of the next FixedUpdate, after any pending job is completed.
         /// </summary>
-        public void RequestScatterPlayerParticles(float fraction)
+        public void RequestScatterPlayerParticles(float fraction, float2 centroid = default, float impulse = 0f)
         {
             _pendingScatter         = true;
             _pendingScatterFraction = fraction;
+            _pendingScatterCentroid = centroid;
+            _pendingScatterImpulse  = impulse;
         }
 
         /// <summary>
@@ -642,8 +646,10 @@ namespace ParticleLife.Simulation
         /// <paramref name="fraction"/>. Converted particles are released from player ownership.
         /// Must be called on the main thread with no job running.
         /// </summary>
-        private void ExecuteScatterPlayerParticles(float fraction)
+        private void ExecuteScatterPlayerParticles(float fraction, float2 centroid, float impulse)
         {
+            bool applyImpulse = impulse > 0.001f;
+
             // Pass 1: probabilistic conversion.
             int converted = 0;
             for (int i = 0; i < _particleCount; i++)
@@ -654,6 +660,8 @@ namespace ParticleLife.Simulation
                 _types[i]             = (byte)_cullRng.NextInt(0, _typeCount);
                 _isPlayerOwned[i]     = false;
                 _isInPlayerCluster[i] = false;
+                if (applyImpulse)
+                    ApplyOutwardImpulse(i, centroid, impulse);
                 converted++;
             }
 
@@ -674,6 +682,17 @@ namespace ParticleLife.Simulation
             _types[chosen]             = (byte)_cullRng.NextInt(0, _typeCount);
             _isPlayerOwned[chosen]     = false;
             _isInPlayerCluster[chosen] = false;
+            if (applyImpulse)
+                ApplyOutwardImpulse(chosen, centroid, impulse);
+        }
+
+        private void ApplyOutwardImpulse(int index, float2 centroid, float impulse)
+        {
+            float2 dir = _positionsRead[index] - centroid;
+            float len = math.length(dir);
+            _velocities[index] += len > 0.001f
+                ? (dir / len) * impulse
+                : new float2(1f, 0f) * impulse;
         }
 
         /// <summary>

@@ -67,6 +67,7 @@ namespace ParticleLife.UI
 
         private void Update()
         {
+            if (!_isVisible) return;
             if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
                 OnRestartClicked();
         }

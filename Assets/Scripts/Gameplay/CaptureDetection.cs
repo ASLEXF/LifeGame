@@ -85,7 +85,6 @@ namespace ParticleLife.Gameplay
 
             if (extMag < _minExternalForce)
             {
-                // No significant external threat — decay timer
                 _captureTimer = math.max(0f, _captureTimer - dt * _timerDecayRate);
                 return;
             }

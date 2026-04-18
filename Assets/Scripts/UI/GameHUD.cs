@@ -29,7 +29,6 @@ namespace ParticleLife.UI
         [SerializeField] private TextMeshProUGUI _particleCountText;
         [SerializeField] private TextMeshProUGUI _survivalTimeText;
         [SerializeField] private Slider          _captureSlider;
-
         [SerializeField] private Slider          _skillSlider;
 
         [Header("引用")]
@@ -38,6 +37,7 @@ namespace ParticleLife.UI
         [SerializeField] private CaptureDetection  _captureDetection;
         [SerializeField] private ClusterDetector   _clusterDetector;
         [SerializeField] private PlayerSkill       _playerSkill;
+        [SerializeField] private MatrixConfigUI    _matrixConfigUI;
 
         private void Start()
         {
@@ -56,12 +56,18 @@ namespace ParticleLife.UI
                 _skillSlider.maxValue    = 1f;
                 _skillSlider.interactable = false;
             }
+
+            if (_matrixConfigUI != null)
+                _matrixConfigUI.PanelVisibilityChanged += OnMatrixPanelVisibilityChanged;
         }
 
         private void OnDestroy()
         {
             if (_gameState != null)
                 _gameState.OnStateChanged -= OnStateChanged;
+
+            if (_matrixConfigUI != null)
+                _matrixConfigUI.PanelVisibilityChanged -= OnMatrixPanelVisibilityChanged;
         }
 
         private void Update()
@@ -102,6 +108,16 @@ namespace ParticleLife.UI
 
                 _skillSlider.value = Mathf.Clamp01(sv);
             }
+        }
+
+        // ── Matrix panel handling ─────────────────────────────────────────────
+
+        private void OnMatrixPanelVisibilityChanged(bool isVisible)
+        {
+            if (isVisible)
+                gameObject.SetActive(false);
+            else if (_gameState.CurrentState == GameState.Running)
+                gameObject.SetActive(true);
         }
 
         // ── State handling ────────────────────────────────────────────────────
