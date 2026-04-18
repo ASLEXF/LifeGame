@@ -259,6 +259,7 @@
     border-color: rgba(140, 140, 140, 0.5);
     border-radius: 4px;
     background-color: rgba(50, 50, 50, 0.4);
+    min-height: 44px;
 }
 
 .preset-foldout > Toggle > Label {
