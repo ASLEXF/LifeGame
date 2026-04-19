@@ -33,7 +33,7 @@ namespace ParticleLife.Input
         [Header("输入动作")]
         [Tooltip("移动动作：配置 2D Vector Composite（WASD / 方向键）+ 手柄左摇杆；移动端 OnScreenStick 自动绑定")]
         [SerializeField] private InputAction _moveAction;
-        [Tooltip("技能动作：配置 F 键 + 手柄 South 键；移动端 OnScreenButton 自动绑定")]
+        [Tooltip("技能动作：配置空格键 + 手柄 South 键；移动端 OnScreenButton 自动绑定")]
         [SerializeField] private InputAction _shieldAction;
 
         [Header("设置")]
@@ -85,7 +85,7 @@ namespace ParticleLife.Input
 
             if (_shieldAction != null && _shieldAction.bindings.Count == 0)
             {
-                _shieldAction.AddBinding("<Keyboard>/f");
+                _shieldAction.AddBinding("<Keyboard>/space");
                 _shieldAction.AddBinding("<Gamepad>/buttonSouth");
             }
         }

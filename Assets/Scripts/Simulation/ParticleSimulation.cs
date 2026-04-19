@@ -48,7 +48,7 @@ namespace ParticleLife.Simulation
 
         [Header("物理参数")]
         [SerializeField] private float _damping     = 0.85f;
-        [SerializeField] private float _maxVelocity = 20f;
+        [SerializeField] private float _maxVelocity = 60f;
 
         [Header("全局力缩放")]
         [Tooltip("实时调整所有粒子间引力/斥力的全局倍数。\n1 = 默认，0 = 无力场（纯惯性运动），2 = 翻倍。\n不影响玩家输入力和边界斥力。")]
@@ -152,6 +152,7 @@ namespace ParticleLife.Simulation
         private NativeArray<float>  _idleTime;
         private NativeArray<float2> _externalForceOnPlayer;
         private NativeArray<float>  _typeRadiiNative;
+        private NativeArray<float>  _repelTimer;
 
         private int _particleCount;
 
@@ -190,6 +191,14 @@ namespace ParticleLife.Simulation
         private float2 _pendingScatterCentroid;
         private float  _pendingScatterImpulse;
 
+        // Repel request: set via RequestRepelNonPlayerParticles(), consumed in FixedUpdate.
+        private bool   _pendingRepel;
+        private float  _pendingRepelImpulse;
+        private float2 _pendingRepelCentroid;
+        private float  _pendingRepelDuration;
+        private float  _pendingRepelRadius;
+        private float  _pendingRepelVelocityBlend;
+
         // ── Runtime matrix editing ────────────────────────────────────────────
         private bool _cellSizeDirty;
 
@@ -224,6 +233,7 @@ namespace ParticleLife.Simulation
             _isInPlayerCluster     = new NativeArray<bool>  (_maxParticleCount, Allocator.Persistent);
             _idleTime              = new NativeArray<float> (_maxParticleCount, Allocator.Persistent);
             _externalForceOnPlayer = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
+            _repelTimer            = new NativeArray<float> (_maxParticleCount, Allocator.Persistent);
 
             _gravityMatrix = GravityMatrix.CreateDefault(_typeCount, Allocator.Persistent);
 
@@ -309,6 +319,13 @@ namespace ParticleLife.Simulation
                 _pendingScatter = false;
             }
 
+            // Execute deferred repel (requested by PlayerSkill.Activate on the Update thread).
+            if (_pendingRepel)
+            {
+                ExecuteRepelNonPlayerParticles(_pendingRepelImpulse, _pendingRepelCentroid, _pendingRepelDuration, _pendingRepelRadius, _pendingRepelVelocityBlend);
+                _pendingRepel = false;
+            }
+
             // Recalculate cell size if any distanceThreshold changed since last frame
             if (_cellSizeDirty)
             {
@@ -380,6 +397,7 @@ namespace ParticleLife.Simulation
                 PlayerMaxExternalReduction = _playerMaxExternalReduction,
                 ExternalForceOnPlayer      = _externalForceOnPlayer,
                 IsInPlayerCluster          = _isInPlayerCluster,
+                RepelTimer                 = _repelTimer,
                 ForceScale                 = _forceScale,
                 UnboundedWorld             = _unboundedWorld,
                 ShieldActive               = _shieldActive,
@@ -443,6 +461,7 @@ namespace ParticleLife.Simulation
             _idleTime             .Dispose();
             _externalForceOnPlayer.Dispose();
             _typeRadiiNative      .Dispose();
+            _repelTimer           .Dispose();
             _gravityMatrix        .Dispose();
             _grid                 .Dispose();
         }
@@ -701,6 +720,39 @@ namespace ParticleLife.Simulation
         }
 
         /// <summary>
+        /// Schedules a one-shot outward impulse on all non-player particles from
+        /// <paramref name="centroid"/>. Repelled particles are immune to particle-particle
+        /// forces for <paramref name="duration"/> seconds, allowing the impulse to carry them
+        /// out of the local attraction zone before normal physics resumes.
+        /// Executes safely at the start of the next FixedUpdate, after any pending job is completed.
+        /// </summary>
+        public void RequestRepelNonPlayerParticles(float impulse, float2 centroid, float duration, float radius, float velocityBlend)
+        {
+            _pendingRepel              = true;
+            _pendingRepelImpulse       = impulse;
+            _pendingRepelCentroid      = centroid;
+            _pendingRepelDuration      = duration;
+            _pendingRepelRadius        = radius;
+            _pendingRepelVelocityBlend = velocityBlend;
+        }
+
+        private void ExecuteRepelNonPlayerParticles(float impulse, float2 centroid, float duration, float radius, float velocityBlend)
+        {
+            float radiusSq = radius * radius;
+            for (int i = 0; i < _particleCount; i++)
+            {
+                if (_isPlayerOwned[i]) continue;
+                if (math.distancesq(_positionsRead[i], centroid) > radiusSq) continue;
+
+                float2 dir        = _positionsRead[i] - centroid;
+                float  len        = math.length(dir);
+                float2 outwardVel = len > 0.001f ? (dir / len) * impulse : new float2(1f, 0f) * impulse;
+                _velocities[i]    = math.lerp(outwardVel, _velocities[i], velocityBlend);
+                _repelTimer[i]    = duration;
+            }
+        }
+
+        /// <summary>
         /// Schedules a one-shot conversion of approximately <paramref name="fraction"/> of
         /// player-owned particles into random non-special types. Executes safely at the
         /// start of the next FixedUpdate, after any pending job is completed.
@@ -789,6 +841,7 @@ namespace ParticleLife.Simulation
                 _isInPlayerCluster[i]     = false;
                 _idleTime[i]              = 0f;
                 _externalForceOnPlayer[i] = float2.zero;
+                _repelTimer[i]            = 0f;
             }
 
             _particleCount    = 0;

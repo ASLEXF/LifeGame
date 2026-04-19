@@ -8,7 +8,7 @@ namespace ParticleLife.Player
     /// Manages the gravity-shield skill activated by the Space key.
     ///
     /// State machine:
-    ///   Ready    → [F pressed]  → Active   (shield on, duration countdown)
+    ///   Ready    → [Space pressed]  → Active   (shield on, duration countdown)
     ///   Active   → [time up]    → Cooldown (shield off, cooldown countdown)
     ///   Cooldown → [time up]    → Ready
     ///
@@ -30,6 +30,16 @@ namespace ParticleLife.Player
         [SerializeField][Range(0f, 1f)] private float _scatterFraction = 0.2f;
         [Tooltip("散射粒子从玩家质心向外获得的速度冲量。0 = 无视觉脉冲效果。")]
         [SerializeField] private float _scatterImpulse = 8f;
+        [Tooltip("技能激活时非玩家粒子获得的最大向外冲量")]
+        [SerializeField] private float _repelImpulseMax = 20f;
+        [Tooltip("玩家粒子占比对冲量的调制强度（0 = 不影响，1 = 完全按占比缩放）")]
+        [SerializeField][Range(0f, 1f)] private float _repelRatioInfluence = 0.549f;
+        [Tooltip("粒子原先速度对弹飞方向的混合权重（0 = 完全向外，1 = 保留原速度）")]
+        [SerializeField][Range(0f, 1f)] private float _repelVelocityBlend = 0.657f;
+        [Tooltip("弹飞免疫持续时间（秒）：被弹飞的粒子在此期间不接受粒子间引力/斥力")]
+        [SerializeField] private float _repelDuration = 2f;
+        [Tooltip("弹飞范围半径（世界单位）：只有玩家质心此半径内的非玩家粒子才会被弹飞")]
+        [SerializeField] private float _repelRadius = 30f;
 
         [Header("引用")]
         [SerializeField] private GameInput          _input;
@@ -82,6 +92,12 @@ namespace ParticleLife.Player
                 ? _playerControl.ClusterCentroid
                 : default;
             _simulation.RequestScatterPlayerParticles(_scatterFraction, centroid, _scatterImpulse);
+
+            int   totalCount  = _simulation.ParticleCount;
+            int   playerCount = _playerControl != null ? _playerControl.PlayerParticleCount : 0;
+            float ratio       = totalCount > 0 ? (float)playerCount / totalCount : 0f;
+            float repelImpulse = _repelImpulseMax * (1f - _repelRatioInfluence * (1f - ratio));
+            _simulation.RequestRepelNonPlayerParticles(repelImpulse, centroid, _repelDuration, _repelRadius, _repelVelocityBlend);
         }
 
         private void Deactivate()

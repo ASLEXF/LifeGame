@@ -84,6 +84,7 @@ namespace ParticleLife.Physics
         [WriteOnly] public NativeArray<float2> PositionsWrite;
         [NativeDisableParallelForRestriction] public NativeArray<float2> Velocities;
         [NativeDisableParallelForRestriction] public NativeArray<float>  IdleTime;
+        [NativeDisableParallelForRestriction] public NativeArray<float>  RepelTimer;
         [ReadOnly]  public NativeArray<bool>   IsPlayerOwned;
         /// <summary>
         /// Superset of IsPlayerOwned: includes player-owned particles AND non-owned particles
@@ -157,6 +158,15 @@ namespace ParticleLife.Physics
             force    *= ForceScale;
             extForce *= ForceScale;
 
+            // 被弹飞的粒子在计时器归零前免疫粒子间力，且跳过阻尼以维持冲量轨迹；仍受边界约束
+            bool isRepelled = RepelTimer[i] > 0f;
+            if (isRepelled)
+            {
+                force         = float2.zero;
+                extForce      = float2.zero;
+                RepelTimer[i] = math.max(0f, RepelTimer[i] - DeltaTime);
+            }
+
             // Shield active: strip external forces from the total force accumulator before
             // zeroing the tracker. Simply zeroing extForce leaves the already-accumulated
             // external contribution inside `force` untouched.
@@ -212,7 +222,7 @@ namespace ParticleLife.Physics
 
             // ── Integrate ──────────────────────────────────────────────────
             vel += force * DeltaTime;
-            vel *= Damping;
+            vel *= isRepelled ? 1f : Damping;
 
             float speed;
             if (isPlayer)
@@ -222,11 +232,15 @@ namespace ParticleLife.Physics
                 if (speed > PlayerMaxSpeed)
                     vel = vel / speed * PlayerMaxSpeed;
             }
-            else
+            else if (!isRepelled)
             {
                 speed = math.length(vel);
                 if (speed > MaxVelocity)
                     vel = vel / speed * MaxVelocity;
+            }
+            else
+            {
+                speed = math.length(vel);
             }
 
             // ── Hard boundary collision ────────────────────────────────────

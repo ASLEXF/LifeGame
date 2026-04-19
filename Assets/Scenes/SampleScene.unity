@@ -267,7 +267,7 @@ MonoBehaviour:
   _worldHeight: 100
   _typeCount: 8
   _damping: 0.85
-  _maxVelocity: 20
+  _maxVelocity: 60
   _forceScale: 1
   _playerInputForce: 400
   _playerMaxSpeed: 25
@@ -490,7 +490,12 @@ MonoBehaviour:
   _shieldCooldown: 0
   _shieldPlayerRepulsionScale: 15
   _scatterFraction: 0.2
-  _scatterImpulse: 8
+  _scatterImpulse: 100
+  _repelImpulseMax: 200
+  _repelRatioInfluence: 0.549
+  _repelVelocityBlend: 0.657
+  _repelDuration: 2
+  _repelRadius: 10
   _input: {fileID: 83642379}
   _simulation: {fileID: 83642377}
   _playerControl: {fileID: 83642376}
