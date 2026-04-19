@@ -67,10 +67,9 @@ namespace ParticleLife.Management
                     ["lang_toggle"]      = "EN",
 
                     // ── HUD ────────────────────────────────────────────
-                    ["hud_player_count"] = "玩家粒子数：{0}{1}",
+                    ["hud_player_count"] = "玩家粒子数：{0}",
                     ["hud_total_count"]  = "粒子总数：{0}",
                     ["hud_survival"]     = "存活：{0}",
-                    ["hud_clusters"]     = " <color=#ff6644>[{0} 团簇]</color>",
 
                     // ── Failure Screen ─────────────────────────────────
                     ["fail_title"]       = "你被捕获了",
@@ -118,10 +117,9 @@ namespace ParticleLife.Management
                     ["lang_toggle"]      = "中文",
 
                     // ── HUD ────────────────────────────────────────────
-                    ["hud_player_count"] = "Player: {0}{1}",
+                    ["hud_player_count"] = "Player: {0}",
                     ["hud_total_count"]  = "Total: {0}",
                     ["hud_survival"]     = "Survived: {0}",
-                    ["hud_clusters"]     = " <color=#ff6644>[{0} clusters]</color>",
 
                     // ── Failure Screen ─────────────────────────────────
                     ["fail_title"]       = "You've Been Captured",

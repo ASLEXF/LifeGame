@@ -74,12 +74,8 @@ namespace ParticleLife.UI
         {
             if (!gameObject.activeSelf) return;
 
-            int clusters = _playerControl.ClusterCount;
-            string clusterSuffix = clusters > 1
-                ? string.Format(Localization.Get("hud_clusters"), clusters)
-                : "";
             _playerParticleCountText.text = string.Format(
-                Localization.Get("hud_player_count"), _playerControl.MainClusterSize, clusterSuffix);
+                Localization.Get("hud_player_count"), _playerControl.PlayerParticleCount, "");
             _particleCountText.text = string.Format(
                 Localization.Get("hud_total_count"), _clusterDetector.ClusterParticleCount);
             _survivalTimeText.text = string.Format(

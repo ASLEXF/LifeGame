@@ -248,9 +248,6 @@ MonoBehaviour:
   _sheddingRate: 0.6
   _edgeFraction: 0.2
   _zeroPatienceSec: 30
-  _splitPenaltyThreshold: 0.1
-  _splitPenaltyMultiplier: 0.5
-  _splitPenaltyMinSize: 5
   _input: {fileID: 83642379}
   _gameState: {fileID: 2072673226}
 --- !u!114 &83642377
@@ -474,6 +471,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.Simulation.ClusterDetector
   _simulation: {fileID: 83642377}
+  _expansionRadius: 5
+  _maxNonOwnedHops: 2
   _detectEveryNFrames: 3
 --- !u!114 &83642382
 MonoBehaviour:
@@ -647,7 +646,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.Rendering.CameraFollow
   _unboundedMode: 1
   _unboundedOrthoSize: 35
-  _unboundedSmoothTime: 0.05
+  _unboundedSmoothTime: 0.5
   _unboundedMaxSpeed: 50
   _extrapolateWithPlayerVelocity: 1
   _followStrength: 0.15

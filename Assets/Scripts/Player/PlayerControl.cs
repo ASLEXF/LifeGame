@@ -9,21 +9,18 @@ using Random = UnityEngine.Random;
 namespace ParticleLife.Player
 {
     /// <summary>
-    /// Manages the player cluster with deferred initialization and split detection.
+    /// Manages the player cluster with deferred initialization.
     ///
     /// Session lifecycle:
     ///   Frame 1: AssignInitialCluster() — picks the densest same-type cluster as player.
     ///            Particles have already settled during the main menu UI transition.
     ///   Each frame (LateUpdate, order 10, after PhysicsJob is complete):
-    ///     1. Split detection: Union-Find over player particles, find largest component.
-    ///        Non-main-cluster particles are IMMEDIATELY reverted to normal (no timer).
-    ///        ClusterCount and MainClusterSize are updated.
-    ///     2. Centroid (for input direction, shedding).
-    ///     3. Input force injected for next FixedUpdate.
-    ///     4. Adopt same-type adjacent non-player particles (snapshot prevents cascade).
-    ///     5. Edge shedding: outermost fraction at high speed may detach.
-    ///     6. Count, report peak.
-    ///     7. Zero-particle survival countdown.
+    ///     1. Centroid + count over all isPlayerOwned particles.
+    ///     2. Input force injected for next FixedUpdate.
+    ///     3. Adopt same-type adjacent non-player particles (snapshot prevents cascade).
+    ///     4. Edge shedding: outermost fraction at high speed may detach.
+    ///     5. Count, report peak.
+    ///     6. Zero-particle survival countdown.
     /// </summary>
     [DefaultExecutionOrder(10)]
     [RequireComponent(typeof(ParticleSimulation))]
@@ -36,14 +33,6 @@ namespace ParticleLife.Player
         [SerializeField] private float _sheddingRate       = 0.6f;
         [SerializeField][Range(0f, 1f)] private float _edgeFraction = 0.2f;
         [SerializeField] private float _zeroPatienceSec    = 30f;
-
-        [Header("分裂惩罚")]
-        [Tooltip("触发级联惩罚的最小损失比例（0.1 = 损失 10% 时触发）")]
-        [SerializeField] private float _splitPenaltyThreshold  = 0.10f;
-        [Tooltip("额外驱逐量 = ceil(lostCount × 此倍数）")]
-        [SerializeField] private float _splitPenaltyMultiplier = 0.50f;
-        [Tooltip("主团簇粒子数低于此值时不触发级联（防止螺旋死亡）")]
-        [SerializeField] private int   _splitPenaltyMinSize    = 5;
 
         [Header("引用")]
         [SerializeField] private GameInput        _input;
@@ -60,7 +49,6 @@ namespace ParticleLife.Player
         private int _adoptFrameCounter;
 
         // Union-Find arrays, reused each frame (allocated once at Start).
-        // _ufSize tracks component size and is used for union-by-size (balanced trees).
         private int[] _ufParent;
         private int[] _ufSize;
 
@@ -70,20 +58,11 @@ namespace ParticleLife.Player
         // 持久化 BFS 队列：避免 AdoptSameTypeBFS 每帧 new NativeQueue(Allocator.Temp)
         private NativeQueue<int> _adoptionQueue;
 
-        /// <summary>Player-owned particle count this frame (equals MainClusterSize after split resolution).</summary>
+        /// <summary>Total number of player-owned particles this frame.</summary>
         public int PlayerParticleCount { get; private set; }
 
         /// <summary>World-space centroid of all player-owned particles.</summary>
         public float2 ClusterCentroid { get; private set; }
-
-        /// <summary>Size of the largest connected player cluster this frame.</summary>
-        public int MainClusterSize { get; private set; }
-
-        /// <summary>
-        /// Number of disconnected player-particle groups detected before split resolution.
-        /// 1 = single connected cluster (healthy). >1 = split detected; smaller groups were reverted.
-        /// </summary>
-        public int ClusterCount { get; private set; }
 
         /// <summary>True after the initial 5-second delay and cluster assignment.</summary>
         public bool IsAssigned => _hasAssigned;
@@ -95,10 +74,10 @@ namespace ParticleLife.Player
 
         private void Start()
         {
-            int maxCount  = _simulation.MaxParticleCount;
-            _bfsVisited   = new bool[maxCount];
-            _ufParent     = new int[maxCount];
-            _ufSize       = new int[maxCount];
+            int maxCount   = _simulation.MaxParticleCount;
+            _bfsVisited    = new bool[maxCount];
+            _ufParent      = new int[maxCount];
+            _ufSize        = new int[maxCount];
             _adoptionQueue = new NativeQueue<int>(Allocator.Persistent);
 
             _gameState.OnStateChanged += OnStateChanged;
@@ -150,23 +129,11 @@ namespace ParticleLife.Player
             NativeArray<byte>   types         = _simulation.Types;
             NativeArray<float2> velocities    = _simulation.Velocities;
 
-            // 1. Split detection: revert stranded fragments, return how many were reverted
-            int prevPlayerCount = PlayerParticleCount;  // last frame's count — used for loss ratio
-            int reverted = HandleSplits(positions, isPlayerOwned, count, _simulation.Grid, _simulation.CellSize);
+            // 1. Split detection: revert fragments outside the main connected component
+            HandleSplits(positions, isPlayerOwned, count, _simulation.Grid, _simulation.CellSize);
 
-            // 2. Centroid + count in one pass (was two separate O(N) scans)
+            // 2. Centroid + count over all isPlayerOwned particles
             (ClusterCentroid, PlayerParticleCount) = ComputeCentroidAndCount(positions, isPlayerOwned, count);
-
-            // 2b. Split cascade penalty: large splits incur an extra edge-shedding cost
-            if (reverted > 0 && prevPlayerCount > 0)
-            {
-                float lossRatio = (float)reverted / prevPlayerCount;
-                if (lossRatio > _splitPenaltyThreshold && MainClusterSize > _splitPenaltyMinSize)
-                {
-                    int penalty = Mathf.CeilToInt(reverted * _splitPenaltyMultiplier);
-                    ForceShedEdgeParticles(penalty, positions, isPlayerOwned, ClusterCentroid);
-                }
-            }
 
             // 3. Mark cluster membership for input-force injection (next FixedUpdate)
             MarkPlayerCluster(positions, isPlayerOwned, count);
@@ -182,7 +149,7 @@ namespace ParticleLife.Player
             // 6. Shed edge particles
             ShedEdge(positions, isPlayerOwned, velocities, count, ClusterCentroid);
 
-            // 7. Report peak (count already updated in step 2)
+            // 7. Report peak
             _gameState.ReportParticleCount(PlayerParticleCount);
 
             // 8. Zero-particle survival countdown
@@ -202,10 +169,8 @@ namespace ParticleLife.Player
 
         private void ResetSession()
         {
-            _hasAssigned    = false;
-            _zeroTimer      = 0f;
-            MainClusterSize = 0;
-            ClusterCount    = 0;
+            _hasAssigned = false;
+            _zeroTimer   = 0f;
 
             int count = _simulation.ParticleCount;
             for (int i = 0; i < count; i++)
@@ -299,39 +264,22 @@ namespace ParticleLife.Player
 
         // ── Split detection (Union-Find, immediate revert) ────────────────────
 
-        /// <summary>
-        /// Builds a Union-Find over all player-owned particles connected within
-        /// _connectionRadius. Identifies the largest connected component (main cluster).
-        /// All player particles NOT in the main cluster are IMMEDIATELY reverted to
-        /// normal particles — no grace-period timer, no oscillation.
-        ///
-        /// Updates ClusterCount (groups found before resolution) and MainClusterSize.
-        ///
-        /// Union-by-size keeps trees balanced for correct component identification.
-        /// Path halving keeps Find amortised O(α(n)).
-        /// </summary>
-        /// <returns>Number of player particles reverted to normal this frame.</returns>
-        private int HandleSplits(
-            NativeArray<float2>                      positions,
-            NativeArray<bool>                        isPlayerOwned,
-            int                                      count,
-            NativeParallelMultiHashMap<int2, int>    grid,
-            float                                    cellSize)
+        private void HandleSplits(
+            NativeArray<float2>                   positions,
+            NativeArray<bool>                     isPlayerOwned,
+            int                                   count,
+            NativeParallelMultiHashMap<int2, int> grid,
+            float                                 cellSize)
         {
-            // Initialise Union-Find
             for (int i = 0; i < count; i++)
             {
                 _ufParent[i] = i;
-                _ufSize[i]   = 1; // every node starts as a size-1 component
+                _ufSize[i]   = 1;
             }
 
-            float threshSq = _connectionRadius * _connectionRadius;
+            float threshSq  = _connectionRadius * _connectionRadius;
+            int   gridRange = (int)math.ceil(_connectionRadius / cellSize);
 
-            // 查询半径（格子数）：确保覆盖 _connectionRadius，哪怕 cellSize < connectionRadius
-            int gridRange = (int)math.ceil(_connectionRadius / cellSize);
-
-            // Union pass: 用空间网格替换 O(N²) 暴力遍历，降为 O(P × k)
-            // j > i 避免重复处理同一对
             for (int i = 0; i < count; i++)
             {
                 if (!isPlayerOwned[i]) continue;
@@ -355,72 +303,27 @@ namespace ParticleLife.Player
                 }
             }
 
-            // Find main cluster root (largest component among player particles)
-            int mainRoot  = -1;
-            int mainSize  = 0;
-            int clusterN  = 0;
-
+            // Find the largest connected component among player particles
+            int mainRoot = -1;
+            int mainSize = 0;
             for (int i = 0; i < count; i++)
             {
                 if (!isPlayerOwned[i]) continue;
-                if (UFFind(i) != i) continue; // not a root — skip
-
-                // i is a root of a player-particle component
-                clusterN++;
-                if (_ufSize[i] > mainSize)
-                {
-                    mainSize = _ufSize[i];
-                    mainRoot = i;
-                }
+                if (UFFind(i) != i) continue;
+                if (_ufSize[i] > mainSize) { mainSize = _ufSize[i]; mainRoot = i; }
             }
 
-            ClusterCount    = clusterN;
-            MainClusterSize = mainSize;
-
-            // Immediate revert: any player particle outside the main cluster
-            // becomes a normal particle right now.
-            int reverted = 0;
+            // Revert all player particles not in the main component
             for (int i = 0; i < count; i++)
             {
                 if (!isPlayerOwned[i]) continue;
-                if (mainRoot >= 0 && UFFind(i) == mainRoot) continue; // in main cluster
-
+                if (mainRoot >= 0 && UFFind(i) == mainRoot) continue;
                 _simulation.SetPlayerOwned(i, false);
-                reverted++;
-            }
-            return reverted;
-        }
-
-        /// <summary>
-        /// Forcibly reverts the <paramref name="n"/> outermost player-owned particles
-        /// (by distance from <paramref name="centroid"/>) to normal particles.
-        /// Respects _splitPenaltyMinSize: will not shed below that floor.
-        /// O(n × ParticleCount) — only called on split events, not every frame.
-        /// </summary>
-        private void ForceShedEdgeParticles(int n, NativeArray<float2> positions,
-            NativeArray<bool> isPlayerOwned, float2 centroid)
-        {
-            int totalCount    = _simulation.ParticleCount;
-            int actualPenalty = Mathf.Min(n, Mathf.Max(0, MainClusterSize - _splitPenaltyMinSize));
-
-            for (int k = 0; k < actualPenalty; k++)
-            {
-                float maxDistSq = -1f;
-                int   farthest  = -1;
-                for (int i = 0; i < totalCount; i++)
-                {
-                    if (!isPlayerOwned[i]) continue;
-                    float dsq = math.distancesq(positions[i], centroid);
-                    if (dsq > maxDistSq) { maxDistSq = dsq; farthest = i; }
-                }
-                if (farthest < 0) break;
-                _simulation.SetPlayerOwned(farthest, false);
             }
         }
 
         private int UFFind(int x)
         {
-            // Path halving
             while (_ufParent[x] != x)
             {
                 _ufParent[x] = _ufParent[_ufParent[x]];
@@ -433,17 +336,8 @@ namespace ParticleLife.Player
         {
             int ra = UFFind(a), rb = UFFind(b);
             if (ra == rb) return;
-            // Union-by-size: attach smaller tree under larger tree root
-            if (_ufSize[ra] >= _ufSize[rb])
-            {
-                _ufParent[rb] = ra;
-                _ufSize[ra]  += _ufSize[rb];
-            }
-            else
-            {
-                _ufParent[ra] = rb;
-                _ufSize[rb]  += _ufSize[ra];
-            }
+            if (_ufSize[ra] >= _ufSize[rb]) { _ufParent[rb] = ra; _ufSize[ra] += _ufSize[rb]; }
+            else                             { _ufParent[ra] = rb; _ufSize[rb] += _ufSize[ra]; }
         }
 
         // ── Input ─────────────────────────────────────────────────────────────
