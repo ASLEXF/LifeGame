@@ -1,5 +1,6 @@
 using System;
 using ParticleLife.Core;
+using ParticleLife.Input;
 using ParticleLife.Physics;
 using ParticleLife.Rendering;
 using Unity.Collections;
@@ -9,6 +10,15 @@ using UnityEngine;
 
 namespace ParticleLife.Simulation
 {
+    /// <summary>How to map discrete physics steps to the display refresh (reduces stair-step / smear).</summary>
+    public enum VisualSmoothingMode
+    {
+        /// <summary>Draw exact integrated positions (no between-step compensation).</summary>
+        None = 0,
+        /// <summary>pos + vel × remainder since last FixedUpdate (common fix for fixed-timestep sims).</summary>
+        VelocityExtrapolation = 1,
+    }
+
     /// <summary>
     /// Root MonoBehaviour that owns all particle state and orchestrates the simulation loop.
     ///
@@ -21,7 +31,7 @@ namespace ParticleLife.Simulation
     ///     5. Swap position buffers
     ///   LateUpdate:
     ///     6. Complete JobHandle
-    ///     7. ParticleRenderer.Render() from positionsRead (now the just-written buffer)
+    ///     7. ParticleRenderer.Render() from positionsRead, or pos+vel×Δt when visual smoothing = velocity extrapolation
     ///
     /// NativeArray lifetime: allocated in Awake, disposed in OnDestroy.
     /// </summary>
@@ -105,6 +115,13 @@ namespace ParticleLife.Simulation
                  "应小于 _spawnRadiusMin，允许粒子在玩家起点附近形成团簇。0 = 从原点向外均匀分布")]
         [SerializeField] private float _initialSpawnRadiusMin = 5f;
 
+        [Header("时间与画面")]
+        [Tooltip("固定物理频率（Hz）。≥1 时在 Awake 设置 Time.fixedDeltaTime = 1/Hz；120 与 144Hz 显示器更合拍。0 = 不改项目设置")]
+        [SerializeField] private int _fixedPhysicsHz = 120;
+
+        [Tooltip("离散积分与显示器刷新对齐方式。速度外推可修正先前「插值 alpha」方向错误导致的后发糊")]
+        [SerializeField] private VisualSmoothingMode _visualSmoothing = VisualSmoothingMode.VelocityExtrapolation;
+
         [Header("无边界世界 — 集群预分组")]
         [Tooltip("每组共享种子位置的粒子数下限。1 = 每粒子独立（退化为原行为）")]
         [SerializeField] private int   _spawnGroupSizeMin  = 2;
@@ -121,10 +138,13 @@ namespace ParticleLife.Simulation
         [Header("引用")]
         [SerializeField] private ParticleRenderer  _renderer;
         [SerializeField] private SpawnRipple       _spawnRipple;
+        [Tooltip("若为空则在 Awake 时从同物体获取。用于在 FixedUpdate 内读取与 Update 同步的输入方向，避免比渲染晚一帧才写入受力")]
+        [SerializeField] private GameInput         _gameInput;
 
         // ── Particle state (NativeArrays) ────────────────────────────────────
         private NativeArray<float2> _positionsRead;
         private NativeArray<float2> _positionsWrite;
+        private NativeArray<float2> _positionsRender;
         private NativeArray<float2> _velocities;
         private NativeArray<byte>   _types;
         private NativeArray<bool>   _isPlayerOwned;
@@ -134,6 +154,9 @@ namespace ParticleLife.Simulation
         private NativeArray<float>  _typeRadiiNative;
 
         private int _particleCount;
+
+        /// <summary>Average velocity of player-owned particles (after last physics complete). Used for camera extrapolation.</summary>
+        private float2 _playerOwnedAverageVelocity;
 
         // ── Supporting systems ────────────────────────────────────────────────
         private GravityMatrix                         _gravityMatrix;
@@ -185,10 +208,16 @@ namespace ParticleLife.Simulation
         {
             if (_renderer == null)
                 _renderer = GetComponent<ParticleRenderer>();
+            if (_gameInput == null)
+                _gameInput = GetComponent<GameInput>();
+
+            if (_fixedPhysicsHz >= 1)
+                Time.fixedDeltaTime = 1f / _fixedPhysicsHz;
 
             // Allocate particle arrays at max capacity
             _positionsRead         = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
             _positionsWrite        = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
+            _positionsRender       = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
             _velocities            = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
             _types                 = new NativeArray<byte>  (_maxParticleCount, Allocator.Persistent);
             _isPlayerOwned         = new NativeArray<bool>  (_maxParticleCount, Allocator.Persistent);
@@ -305,14 +334,14 @@ namespace ParticleLife.Simulation
                 _playerCentroid,
                 _unboundedWorld ? _spawnRadiusMin : 0f,
                 _unboundedWorld ? _spawnRadiusMax : 0f,
-                _unboundedWorld ? ComputeSmoothedMoveDir(_playerInputDir) : float2.zero,
+                _unboundedWorld ? ComputeSmoothedMoveDir(CurrentPhysicsInputDir) : float2.zero,
                 _unboundedWorld ? _spawnDirectionBias : 0f);
 
             // Unbounded mode: teleport distant non-player particles back into the spawn ring.
             // Runs every CullEveryNFrames to amortise the O(N) scan cost.
             if (_unboundedWorld && ++_cullFrameCounter % CullEveryNFrames == 0)
                 CullAndRespawn(_playerCentroid,
-                               ComputeSmoothedMoveDir(_playerInputDir),
+                               ComputeSmoothedMoveDir(CurrentPhysicsInputDir),
                                _spawnDirectionBias);
 
             if (_particleCount <= 0) return;
@@ -343,7 +372,7 @@ namespace ParticleLife.Simulation
                 BounceRestitution          = _bounceRestitution,
                 BoundaryThreshold          = _boundaryThreshold,
                 BoundaryStrength           = _boundaryStrength,
-                PlayerInputDir             = _playerInputDir,
+                PlayerInputDir             = CurrentPhysicsInputDir,
                 PlayerInputForce           = _playerInputForce,
                 PlayerMaxSpeed             = _playerMaxSpeed,
                 PlayerParticleCount        = _playerParticleCount,
@@ -376,7 +405,22 @@ namespace ParticleLife.Simulation
 
             if (_particleCount > 0)
             {
-                _renderer.Render(_positionsRead, _types, _isPlayerOwned, _particleCount, _typeRadiiNative);
+                UpdatePlayerOwnedAverageVelocity();
+
+                NativeArray<float2> renderPositions = _positionsRead;
+                if (_visualSmoothing == VisualSmoothingMode.VelocityExtrapolation)
+                {
+                    // Advance display along current velocity for wall-clock time since last FixedUpdate.
+                    // (Prev lerp(prev,curr,alpha) used alpha that peaks *after* integrate — showed wrong state near 0.)
+                    float rem = Time.time - Time.fixedTime;
+                    rem = Mathf.Min(rem, Time.fixedDeltaTime * 2f);
+                    int n = _particleCount;
+                    for (int i = 0; i < n; i++)
+                        _positionsRender[i] = _positionsRead[i] + _velocities[i] * rem;
+                    renderPositions = _positionsRender;
+                }
+
+                _renderer.Render(renderPositions, _types, _isPlayerOwned, _particleCount, _typeRadiiNative);
             }
         }
 
@@ -391,6 +435,7 @@ namespace ParticleLife.Simulation
 
             _positionsRead        .Dispose();
             _positionsWrite       .Dispose();
+            _positionsRender      .Dispose();
             _velocities           .Dispose();
             _types                .Dispose();
             _isPlayerOwned        .Dispose();
@@ -500,10 +545,37 @@ namespace ParticleLife.Simulation
         }
 
         /// <summary>
+        /// Direction used in FixedUpdate for physics and spawn bias — same frame as <see cref="GameInput.Update"/>,
+        /// avoiding one-frame lag from LateUpdate-only <see cref="SetPlayerInput"/>.
+        /// </summary>
+        private float2 CurrentPhysicsInputDir =>
+            _gameInput != null ? _gameInput.DirectionThisFrame : _playerInputDir;
+
+        private void UpdatePlayerOwnedAverageVelocity()
+        {
+            float2 sum = float2.zero;
+            int    c   = 0;
+            for (int i = 0; i < _particleCount; i++)
+            {
+                if (!_isPlayerOwned[i]) continue;
+                sum += _velocities[i];
+                c++;
+            }
+
+            _playerOwnedAverageVelocity = c > 0 ? sum / c : float2.zero;
+        }
+
+        /// <summary>Mean velocity of player-owned particles; matches extrapolated cloud for camera follow.</summary>
+        public float2 PlayerOwnedAverageVelocity => _playerOwnedAverageVelocity;
+
+        /// <summary>True when drawing uses velocity extrapolation — camera can mirror the same offset.</summary>
+        public bool UsesVelocityVisualSmoothing => _visualSmoothing == VisualSmoothingMode.VelocityExtrapolation;
+
+        /// <summary>
         /// Effective player input as a force-scale vector (dir × PlayerInputSpeed).
         /// Read by CaptureDetection to compare against external forces.
         /// </summary>
-        public float2 PlayerInputForce => _playerInputDir * _playerInputForce;
+        public float2 PlayerInputForce => CurrentPhysicsInputDir * _playerInputForce;
 
         /// <summary>Returns gravity parameters for typeA acting on typeB.</summary>
         public Core.GravityEntry GetGravityEntry(int typeA, int typeB)

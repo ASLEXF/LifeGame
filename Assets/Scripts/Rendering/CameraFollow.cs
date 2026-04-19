@@ -28,10 +28,13 @@ namespace ParticleLife.Rendering
         [SerializeField] private bool  _unboundedMode      = false;
         [Tooltip("无边界模式下的正交摄像机尺寸（世界单位）")]
         [SerializeField] private float _unboundedOrthoSize = 35f;
-        [Tooltip("无边界模式下的摄像机平滑时间（秒）。值越小越贴近玩家，0 = 完全跟手。建议 0–0.1")]
+        [Tooltip("无边界模式下的摄像机平滑时间（秒）。值越小越贴近玩家，0 = 每帧直接对齐质心（更跟手、减少与物理步错位感）。建议 0–0.1")]
         [SerializeField] private float _unboundedSmoothTime = 0.05f;
         [Tooltip("无边界模式下的摄像机最大移动速度（世界单位/秒），0 = 不限制。应 ≥ 玩家最大速度以避免画面滞后")]
         [SerializeField] private float _unboundedMaxSpeed   = 0f;
+
+        [Tooltip("用玩家团簇平均速度外推目标点，与 ParticleSimulation 的显示外推一致，减少「球在动、镜还慢半拍」的拖影感")]
+        [SerializeField] private bool  _extrapolateWithPlayerVelocity = true;
 
         [Header("跟随设置")]
         [Tooltip("有界模式下的摄像机偏移强度：0 = 固定居中，1 = 完全跟随。建议 0.1–0.2")]
@@ -81,6 +84,16 @@ namespace ParticleLife.Rendering
                 float  strength  = _unboundedMode ? 1f : _followStrength;
                 targetPos.x = centroid.x * strength;
                 targetPos.y = centroid.y * strength;
+
+                if (_unboundedMode && _extrapolateWithPlayerVelocity && _simulation != null
+                    && _simulation.UsesVelocityVisualSmoothing)
+                {
+                    float rem = Time.time - Time.fixedTime;
+                    rem = Mathf.Min(rem, Time.fixedDeltaTime * 2f);
+                    float2 v   = _simulation.PlayerOwnedAverageVelocity;
+                    targetPos.x += v.x * rem;
+                    targetPos.y += v.y * rem;
+                }
             }
 
             float smoothTime = _unboundedMode ? _unboundedSmoothTime : _smoothTime;
@@ -92,6 +105,12 @@ namespace ParticleLife.Rendering
             if (dist > _snapDistance)
             {
                 // Snap instantly when very far — avoids long catch-up after restart.
+                transform.position = targetPos;
+                _velocity = Vector3.zero;
+            }
+            else if (smoothTime <= 0f)
+            {
+                // No smoothing — avoids camera lag relative to player centroid (reduces perceived judder with discrete physics).
                 transform.position = targetPos;
                 _velocity = Vector3.zero;
             }

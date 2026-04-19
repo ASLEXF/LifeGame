@@ -303,12 +303,15 @@ MonoBehaviour:
   _spawnDirectionBias: 0.7
   _spawnDirWindowSec: 2
   _initialSpawnRadiusMin: 0
+  _fixedPhysicsHz: 120
+  _visualSmoothing: 1
   _spawnGroupSizeMin: 10
   _spawnGroupSizeMax: 50
   _clusterSpawnJitter: 0.5
   _gravityMatrixConfig: []
   _renderer: {fileID: 83642378}
   _spawnRipple: {fileID: 83642380}
+  _gameInput: {fileID: 0}
 --- !u!114 &83642378
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -646,6 +649,7 @@ MonoBehaviour:
   _unboundedOrthoSize: 35
   _unboundedSmoothTime: 0.05
   _unboundedMaxSpeed: 50
+  _extrapolateWithPlayerVelocity: 1
   _followStrength: 0.15
   _smoothTime: 0.5
   _maxSpeed: 50
@@ -1110,8 +1114,6 @@ MonoBehaviour:
   _survivalTimeText: {fileID: 1200010212}
   _captureSlider: {fileID: 1200010402}
   _skillSlider: {fileID: 1262035584}
-  _dangerOverlay: {fileID: 0}
-  _dangerFadeOutRate: 2
   _gameState: {fileID: 2072673226}
   _playerControl: {fileID: 83642376}
   _captureDetection: {fileID: 1200010010}
