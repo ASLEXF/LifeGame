@@ -67,6 +67,9 @@ namespace ParticleLife.Player
         /// <summary>True after the initial 5-second delay and cluster assignment.</summary>
         public bool IsAssigned => _hasAssigned;
 
+        /// <summary>The particle type index assigned to the player. Valid only when IsAssigned is true.</summary>
+        public byte PlayerType => _playerType;
+
         private void Awake()
         {
             _simulation = GetComponent<ParticleSimulation>();

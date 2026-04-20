@@ -659,6 +659,9 @@ namespace ParticleLife.Simulation
         /// <summary>Total particle type count including the 2 special types (black + white).</summary>
         public int TotalTypeCount => _gravityMatrix.TypeCount;
 
+        /// <summary>Returns the display color for a normal particle type index (matches ParticleRenderer coloring).</summary>
+        public Color GetTypeColor(int typeIndex) => _renderer != null ? _renderer.GetTypeColor(typeIndex) : Color.white;
+
         // ── Public accessors (for PlayerControl, HUD, etc.) ──────────────────
 
         /// <summary>Active particle count.</summary>

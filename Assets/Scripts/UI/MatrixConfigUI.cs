@@ -6,6 +6,7 @@ using System;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
+using ParticleLife.Player;
 
 namespace ParticleLife.UI
 {
@@ -40,6 +41,7 @@ namespace ParticleLife.UI
         [Header("引用")]
         [SerializeField] private ParticleSimulation _simulation;
         [SerializeField] private ConfigPersistence  _configPersistence;
+        [SerializeField] private PlayerControl      _playerControl;
 
         // Per-cell slider references [typeA * typeCount + typeB]
         private Slider[] _attractionSliders;
@@ -209,14 +211,53 @@ namespace ParticleLife.UI
             grid.name = "grid-container";
             grid.AddToClassList("grid-container");
 
+            // Determine which type belongs to the player (-1 = not yet assigned)
+            int playerType = (_playerControl != null && _playerControl.IsAssigned)
+                ? (int)_playerControl.PlayerType : -1;
+
+            // Column header row (typeB color swatches)
+            var colHeaderRow = new VisualElement();
+            colHeaderRow.AddToClassList("col-header-row");
+            var colHeaderSpacer = new VisualElement();
+            colHeaderSpacer.AddToClassList("col-header-spacer");
+            colHeaderRow.Add(colHeaderSpacer);
+            for (int b = 0; b < n; b++)
+            {
+                var colHeader = new VisualElement();
+                colHeader.AddToClassList("col-header-cell");
+                var colSwatch = new VisualElement();
+                colSwatch.AddToClassList("type-swatch");
+                Color colColor = _simulation.GetTypeColor(b);
+                colSwatch.style.backgroundColor = new StyleColor(colColor);
+                colHeader.Add(colSwatch);
+                var colLabel = new Label(string.Format(Localization.Get("matrix_type"), b));
+                colLabel.AddToClassList("col-header-label");
+                colHeader.Add(colLabel);
+                if (b == playerType)
+                    ApplyPlayerTypeHighlight(colHeader, colColor);
+                colHeaderRow.Add(colHeader);
+            }
+            grid.Add(colHeaderRow);
+
             for (int a = 0; a < n; a++)
             {
                 var row = new VisualElement();
                 row.AddToClassList("matrix-row");
 
+                // Row header: color swatch + type label
+                var rowHeader = new VisualElement();
+                rowHeader.AddToClassList("row-header");
+                var rowSwatch = new VisualElement();
+                rowSwatch.AddToClassList("type-swatch");
+                Color rowColor = _simulation.GetTypeColor(a);
+                rowSwatch.style.backgroundColor = new StyleColor(rowColor);
+                rowHeader.Add(rowSwatch);
                 var rowLabel = new Label(string.Format(Localization.Get("matrix_type"), a));
-                rowLabel.AddToClassList("row-label");
-                row.Add(rowLabel);
+                rowLabel.AddToClassList("row-header-label");
+                rowHeader.Add(rowLabel);
+                if (a == playerType)
+                    ApplyPlayerTypeHighlight(rowHeader, rowColor);
+                row.Add(rowHeader);
 
                 for (int b = 0; b < n; b++)
                 {
@@ -533,6 +574,20 @@ namespace ParticleLife.UI
         }
 
         /// <summary>Interpolates cell background: blue (strong repulsion) → neutral → orange (strong attraction).</summary>
+        private static void ApplyPlayerTypeHighlight(VisualElement header, Color typeColor)
+        {
+            header.AddToClassList("player-type-header");
+            var sc = new StyleColor(typeColor);
+            header.style.borderTopColor    = sc;
+            header.style.borderBottomColor = sc;
+            header.style.borderLeftColor   = sc;
+            header.style.borderRightColor  = sc;
+            var badge = new Label(Localization.Get("matrix_player"));
+            badge.AddToClassList("player-badge");
+            badge.style.color = new StyleColor(typeColor);
+            header.Add(badge);
+        }
+
         private static void UpdateCellColor(VisualElement cell, float attractionStrength)
         {
             float t = Mathf.InverseLerp(-40f, 40f, attractionStrength); // 0 = repulsion, 1 = attraction

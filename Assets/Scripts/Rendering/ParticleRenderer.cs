@@ -155,6 +155,10 @@ namespace ParticleLife.Rendering
         /// </summary>
         public void SetNormalTypeCount(int normalTypeCount) => _normalTypeCount = normalTypeCount;
 
+        /// <summary>Returns the display color for a normal particle type index (0-based, excludes special types).</summary>
+        public Color GetTypeColor(int typeIndex) =>
+            _typeColors.Length > 0 ? _typeColors[typeIndex % _typeColors.Length] : Color.white;
+
         // 返回 type 对应的渲染直径（= 半径 × 2）；若 typeRadii 未配置则回退到 _particleScale
         private float ParticleScale(byte type, NativeArray<float> typeRadii) =>
             typeRadii.IsCreated && type < typeRadii.Length

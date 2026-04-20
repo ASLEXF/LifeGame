@@ -267,7 +267,7 @@ MonoBehaviour:
   _worldHeight: 100
   _typeCount: 8
   _damping: 0.85
-  _maxVelocity: 60
+  _maxVelocity: 20
   _forceScale: 1
   _playerInputForce: 400
   _playerMaxSpeed: 25
@@ -490,12 +490,12 @@ MonoBehaviour:
   _shieldCooldown: 0
   _shieldPlayerRepulsionScale: 15
   _scatterFraction: 0.2
-  _scatterImpulse: 100
-  _repelImpulseMax: 200
+  _scatterImpulse: 40
+  _repelImpulseMax: 40
   _repelRatioInfluence: 0.549
   _repelVelocityBlend: 0.657
   _repelDuration: 2
-  _repelRadius: 10
+  _repelRadius: 30
   _input: {fileID: 83642379}
   _simulation: {fileID: 83642377}
   _playerControl: {fileID: 83642376}
@@ -651,7 +651,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.Rendering.CameraFollow
   _unboundedMode: 1
   _unboundedOrthoSize: 35
-  _unboundedSmoothTime: 0.5
+  _unboundedSmoothTime: 0.75
   _unboundedMaxSpeed: 50
   _extrapolateWithPlayerVelocity: 1
   _followStrength: 0.15
@@ -958,6 +958,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.UI.MatrixConfigUI
   _simulation: {fileID: 83642377}
   _configPersistence: {fileID: 1200010011}
+  _playerControl: {fileID: 83642376}
 --- !u!1 &1200010100
 GameObject:
   m_ObjectHideFlags: 0

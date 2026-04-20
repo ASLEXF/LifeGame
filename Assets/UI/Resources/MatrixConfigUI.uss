@@ -329,3 +329,78 @@
     font-size: 28px;
     color: rgb(110, 110, 110);
 }
+
+/* ── Type color swatches ─────────────────────────────────────────────── */
+
+.type-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.row-header {
+    min-width: 90px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    padding-left: 6px;
+    padding-right: 6px;
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+
+.row-header-label {
+    font-size: 18px;
+    color: rgb(180, 180, 180);
+    white-space: nowrap;
+    margin-left: 5px;
+}
+
+.col-header-row {
+    flex-direction: row;
+    margin-bottom: 2px;
+    align-items: center;
+}
+
+.col-header-spacer {
+    min-width: 90px;
+    flex-shrink: 0;
+}
+
+.col-header-cell {
+    flex-grow: 1;
+    flex-shrink: 0;
+    min-width: 280px;
+    margin: 2px 4px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+}
+
+.col-header-label {
+    font-size: 14px;
+    color: rgb(160, 160, 160);
+    margin-left: 5px;
+}
+
+/* ── Player type highlight ───────────────────────────────────────────── */
+
+.player-type-header {
+    border-width: 2px;
+    border-radius: 4px;
+    padding: 2px 4px;
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.player-badge {
+    font-size: 11px;
+    -unity-font-style: bold;
+    margin-left: 4px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    background-color: rgba(255, 255, 255, 0.10);
+    white-space: nowrap;
+}
