@@ -742,10 +742,13 @@ namespace ParticleLife.Simulation
         private void ExecuteRepelNonPlayerParticles(float impulse, float2 centroid, float duration, float radius, float velocityBlend)
         {
             float radiusSq = radius * radius;
+
             for (int i = 0; i < _particleCount; i++)
             {
                 if (_isPlayerOwned[i]) continue;
                 if (math.distancesq(_positionsRead[i], centroid) > radiusSq) continue;
+                // 只弹飞至少有一个玩家粒子正在向其扩张方向运动的粒子
+                if (!IsInExpansionPathOfAnyPlayerParticle(i, centroid)) continue;
 
                 float2 dir        = _positionsRead[i] - centroid;
                 float  len        = math.length(dir);
@@ -753,6 +756,23 @@ namespace ParticleLife.Simulation
                 _velocities[i]    = math.lerp(outwardVel, _velocities[i], velocityBlend);
                 _repelTimer[i]    = duration;
             }
+        }
+
+        /// <summary>
+        /// Returns true if any player-owned particle j is expanding outward toward particle i.
+        /// Condition: particle i is "ahead" of j in j's outward direction from centroid.
+        /// </summary>
+        private bool IsInExpansionPathOfAnyPlayerParticle(int index, float2 centroid)
+        {
+            float2 posI = _positionsRead[index];
+            for (int j = 0; j < _particleCount; j++)
+            {
+                if (!_isPlayerOwned[j]) continue;
+                float2 posJ         = _positionsRead[j];
+                float2 expansionDir = math.normalizesafe(posJ - centroid);
+                if (math.dot(posI - posJ, expansionDir) > 0f) return true;
+            }
+            return false;
         }
 
         /// <summary>

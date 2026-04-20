@@ -1,4 +1,5 @@
 using ParticleLife.Input;
+using ParticleLife.Management;
 using ParticleLife.Simulation;
 using UnityEngine;
 
@@ -45,6 +46,7 @@ namespace ParticleLife.Player
         [SerializeField] private GameInput          _input;
         [SerializeField] private ParticleSimulation _simulation;
         [SerializeField] private PlayerControl      _playerControl;
+        [SerializeField] private GameStateManager   _gameState;
 
         /// <summary>True while the shield is active.</summary>
         public bool  IsShieldActive        { get; private set; }
@@ -77,7 +79,8 @@ namespace ParticleLife.Player
                     break;
             }
 
-            if (_state == ShieldState.Ready && _input != null && _input.ShieldPressed)
+            if (_state == ShieldState.Ready && _input != null && _input.ShieldPressed
+                && _playerControl != null && _playerControl.IsAssigned)
                 Activate();
         }
 
