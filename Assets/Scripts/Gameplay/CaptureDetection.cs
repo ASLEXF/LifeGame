@@ -96,8 +96,9 @@ namespace ParticleLife.Gameplay
             else
                 _captureTimer = math.max(0f, _captureTimer - dt * _timerDecayRate);
 
-            if (_captureTimer >= _captureDuration)
-                _gameState.TransitionTo(GameState.Failed);
+            // [DISABLED] Capture-based failure temporarily replaced by zero-particle failure in PlayerControl.
+            // if (_captureTimer >= _captureDuration)
+            //     _gameState.TransitionTo(GameState.Failed);
         }
 
     private void OnGameStateChanged(GameState state)

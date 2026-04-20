@@ -490,8 +490,8 @@ MonoBehaviour:
   _shieldCooldown: 0
   _shieldPlayerRepulsionScale: 15
   _scatterFraction: 0.2
-  _scatterImpulse: 40
-  _repelImpulseMax: 40
+  _scatterImpulse: 20
+  _repelImpulseMax: 50
   _repelRatioInfluence: 0.549
   _repelVelocityBlend: 0.657
   _repelDuration: 2
@@ -499,6 +499,7 @@ MonoBehaviour:
   _input: {fileID: 83642379}
   _simulation: {fileID: 83642377}
   _playerControl: {fileID: 83642376}
+  _gameState: {fileID: 2072673226}
 --- !u!1 &519420028
 GameObject:
   m_ObjectHideFlags: 0
@@ -1853,11 +1854,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.UI.FailureScreen
   _canvasGroup: {fileID: 1200010502}
-  _titleText: {fileID: 0}
+  _titleText: {fileID: 1200010523}
   _survivalTimeText: {fileID: 1200010533}
   _peakCountText: {fileID: 1200010543}
   _restartButton: {fileID: 1200010554}
-  _restartButtonText: {fileID: 0}
+  _restartButtonText: {fileID: 1200010563}
   _fadeDuration: 0.3
   _gameState: {fileID: 2072673226}
   _simulation: {fileID: 83642377}

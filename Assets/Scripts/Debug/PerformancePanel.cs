@@ -18,6 +18,7 @@ public class PerformancePanel : MonoBehaviour
 
     private GUIStyle style;
     private Rect rect;
+    private float memoryMB;
 
     void Start()
     {
@@ -51,6 +52,8 @@ public class PerformancePanel : MonoBehaviour
             fps = frameCount / elapsedTime;
             lowest = low;
             highest = high;
+            if (showMemory)
+                memoryMB = System.GC.GetTotalMemory(false) / 1024f / 1024f;
 
             frameCount = 0;
             elapsedTime = 0f;
@@ -68,13 +71,9 @@ public class PerformancePanel : MonoBehaviour
             style.normal.textColor = Color.white;
         }
 
-        float memoryMB = System.GC.GetTotalMemory(false) / 1024f / 1024f;
-
         string text = $"FPS: {fps:F1} Low: {lowest:F1} High: {highest:F1}";
         if (showMemory)
-        {
             text += $"\nMemory: {memoryMB:F1} MB";
-        }
 
         GUI.Label(rect, text, style);
     }

@@ -72,7 +72,7 @@ namespace ParticleLife.Management
                     ["hud_survival"]     = "存活：{0}",
 
                     // ── Failure Screen ─────────────────────────────────
-                    ["fail_title"]       = "你被捕获了",
+                    ["fail_title"]       = "你已失去全部粒子",
                     ["fail_survival"]    = "存活时间：{0}",
                     ["fail_peak"]        = "峰值粒子数：{0}",
                     ["fail_restart"]     = "重新开始  [R]",
@@ -123,7 +123,7 @@ namespace ParticleLife.Management
                     ["hud_survival"]     = "Survived: {0}",
 
                     // ── Failure Screen ─────────────────────────────────
-                    ["fail_title"]       = "You've Been Captured",
+                    ["fail_title"]       = "You've Lost All Particles",
                     ["fail_survival"]    = "Survived: {0}",
                     ["fail_peak"]        = "Peak: {0}",
                     ["fail_restart"]     = "Restart  [R]",

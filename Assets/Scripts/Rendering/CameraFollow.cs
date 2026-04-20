@@ -77,22 +77,29 @@ namespace ParticleLife.Rendering
             // Compute target: world center + small offset toward player
             Vector3 targetPos = new Vector3(0f, 0f, _cameraZ);
 
-            if (_playerControl != null && _playerControl.IsAssigned
-                && _playerControl.PlayerParticleCount > 0)
+            if (_playerControl != null && _playerControl.IsAssigned)
             {
-                float2 centroid  = _playerControl.ClusterCentroid;
-                float  strength  = _unboundedMode ? 1f : _followStrength;
-                targetPos.x = centroid.x * strength;
-                targetPos.y = centroid.y * strength;
-
-                if (_unboundedMode && _extrapolateWithPlayerVelocity && _simulation != null
-                    && _simulation.UsesVelocityVisualSmoothing)
+                if (_playerControl.PlayerParticleCount > 0)
                 {
-                    float rem = Time.time - Time.fixedTime;
-                    rem = Mathf.Min(rem, Time.fixedDeltaTime * 2f);
-                    float2 v   = _simulation.PlayerOwnedAverageVelocity;
-                    targetPos.x += v.x * rem;
-                    targetPos.y += v.y * rem;
+                    float2 centroid  = _playerControl.ClusterCentroid;
+                    float  strength  = _unboundedMode ? 1f : _followStrength;
+                    targetPos.x = centroid.x * strength;
+                    targetPos.y = centroid.y * strength;
+
+                    if (_unboundedMode && _extrapolateWithPlayerVelocity && _simulation != null
+                        && _simulation.UsesVelocityVisualSmoothing)
+                    {
+                        float rem = Time.time - Time.fixedTime;
+                        rem = Mathf.Min(rem, Time.fixedDeltaTime * 2f);
+                        float2 v   = _simulation.PlayerOwnedAverageVelocity;
+                        targetPos.x += v.x * rem;
+                        targetPos.y += v.y * rem;
+                    }
+                }
+                else
+                {
+                    // All player particles gone — freeze camera until restart.
+                    targetPos = transform.position;
                 }
             }
 

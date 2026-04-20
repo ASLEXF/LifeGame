@@ -68,22 +68,24 @@ namespace ParticleLife.Simulation
         /// half-angle = π × (1 − bias). At bias 0.7 the sector is ±54°.
         /// </summary>
         public void Tick(
-            NativeArray<float2> positionsRead,
-            NativeArray<float2> positionsWrite,
-            NativeArray<float2> velocities,
-            NativeArray<byte>   types,
-            NativeArray<bool>   isPlayerOwned,
-            NativeArray<float>  idleTime,
-            ref int             particleCount,
-            int                 maxParticleCount,
-            int                 typeCount,
-            float               worldHalfX,
-            float               worldHalfY,
-            float2              centerPos,
-            float               spawnRadiusMin,
-            float               spawnRadiusMax,
-            float2              moveDir,
-            float               spawnDirectionBias)
+            NativeArray<float2>                   positionsRead,
+            NativeArray<float2>                   positionsWrite,
+            NativeArray<float2>                   velocities,
+            NativeArray<byte>                     types,
+            NativeArray<bool>                     isPlayerOwned,
+            NativeArray<float>                    idleTime,
+            ref int                               particleCount,
+            int                                   maxParticleCount,
+            int                                   typeCount,
+            float                                 worldHalfX,
+            float                                 worldHalfY,
+            float2                                centerPos,
+            float                                 spawnRadiusMin,
+            float                                 spawnRadiusMax,
+            float2                                moveDir,
+            float                                 spawnDirectionBias,
+            NativeParallelMultiHashMap<int2, int> grid,
+            float                                 cellSize)
         {
             _timer += Time.fixedDeltaTime;
             if (_timer < _spawnInterval) return;
@@ -128,7 +130,7 @@ namespace ParticleLife.Simulation
                         _rng.NextFloat() * (worldHalfX * 2f) - worldHalfX,
                         _rng.NextFloat() * (worldHalfY * 2f) - worldHalfY);
                 }
-                float density = LocalDensity(candidate, positionsRead, particleCount);
+                float density = LocalDensity(candidate, positionsRead, particleCount, grid, cellSize);
                 float weight  = 1f - math.saturate(density / _densityCap);
                 if (weight > 0f && density < lowestDens)
                 {
@@ -184,16 +186,42 @@ namespace ParticleLife.Simulation
             OnParticleSpawned?.Invoke(spawnPos, spawnType);
         }
 
-        private float LocalDensity(float2 center, NativeArray<float2> positions, int count)
+        private float LocalDensity(
+            float2                                center,
+            NativeArray<float2>                   positions,
+            int                                   count,
+            NativeParallelMultiHashMap<int2, int> grid,
+            float                                 cellSize)
         {
             float r2 = _densityRadius * _densityRadius;
-            int   n  = 0;
-            for (int i = 0; i < count; i++)
+
+            // Grid path: O(k × cells²) instead of O(n). Falls back to O(n) if grid unavailable.
+            if (cellSize > 0f && grid.IsCreated)
             {
-                float2 d = positions[i] - center;
-                if (math.lengthsq(d) < r2) n++;
+                int  densityRange = (int)math.ceil(_densityRadius / cellSize);
+                int2 centerCell   = (int2)math.floor(center / cellSize);
+                int  n            = 0;
+                for (int dx = -densityRange; dx <= densityRange; dx++)
+                for (int dy = -densityRange; dy <= densityRange; dy++)
+                {
+                    int2 cell = centerCell + new int2(dx, dy);
+                    if (!grid.TryGetFirstValue(cell, out int i, out var it)) continue;
+                    do
+                    {
+                        if (math.lengthsq(positions[i] - center) < r2) n++;
+                    }
+                    while (grid.TryGetNextValue(out i, ref it));
+                }
+                return n;
             }
-            return n;
+
+            // Fallback: full O(n) scan.
+            {
+                int n = 0;
+                for (int i = 0; i < count; i++)
+                    if (math.lengthsq(positions[i] - center) < r2) n++;
+                return n;
+            }
         }
     }
 }

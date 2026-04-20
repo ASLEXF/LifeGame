@@ -39,6 +39,11 @@ namespace ParticleLife.UI
         [SerializeField] private PlayerSkill       _playerSkill;
         [SerializeField] private MatrixConfigUI    _matrixConfigUI;
 
+        // Cached values — text is only rebuilt when the integer value changes.
+        private int _lastPlayerCount  = -1;
+        private int _lastTotalCount   = -1;
+        private int _lastSurvivalSec  = -1;
+
         private void Start()
         {
             _gameState.OnStateChanged += OnStateChanged;
@@ -46,9 +51,11 @@ namespace ParticleLife.UI
             // Sync visibility to initial state — GameStateManager now starts at MainMenu.
             gameObject.SetActive(_gameState.CurrentState == GameState.Running);
 
-            _captureSlider.minValue    = 0f;
-            _captureSlider.maxValue    = 1f;
-            _captureSlider.interactable = false;
+            // [DISABLED] Capture slider temporarily removed alongside capture-based failure.
+            // _captureSlider.minValue    = 0f;
+            // _captureSlider.maxValue    = 1f;
+            // _captureSlider.interactable = false;
+            if (_captureSlider != null) _captureSlider.gameObject.SetActive(false);
 
             if (_skillSlider != null)
             {
@@ -74,17 +81,35 @@ namespace ParticleLife.UI
         {
             if (!gameObject.activeSelf) return;
 
-            _playerParticleCountText.text = string.Format(
-                Localization.Get("hud_player_count"), _playerControl.PlayerParticleCount, "");
-            _particleCountText.text = string.Format(
-                Localization.Get("hud_total_count"), _clusterDetector.ClusterParticleCount);
-            _survivalTimeText.text = string.Format(
-                Localization.Get("hud_survival"), Localization.FormatTime(_gameState.SessionDuration));
+            int playerCount = _playerControl.PlayerParticleCount;
+            if (playerCount != _lastPlayerCount)
+            {
+                _playerParticleCountText.text = string.Format(
+                    Localization.Get("hud_player_count"), playerCount, "");
+                _lastPlayerCount = playerCount;
+            }
 
-            float captureFraction = _captureDetection.CaptureDuration > 0f
-                ? _captureDetection.CaptureTimer / _captureDetection.CaptureDuration
-                : 0f;
-            _captureSlider.value = Mathf.Clamp01(captureFraction);
+            int totalCount = _clusterDetector.ClusterParticleCount;
+            if (totalCount != _lastTotalCount)
+            {
+                _particleCountText.text = string.Format(
+                    Localization.Get("hud_total_count"), totalCount);
+                _lastTotalCount = totalCount;
+            }
+
+            int survivalSec = (int)_gameState.SessionDuration;
+            if (survivalSec != _lastSurvivalSec)
+            {
+                _survivalTimeText.text = string.Format(
+                    Localization.Get("hud_survival"), Localization.FormatTime(_gameState.SessionDuration));
+                _lastSurvivalSec = survivalSec;
+            }
+
+            // [DISABLED] Capture slider temporarily removed alongside capture-based failure.
+            // float captureFraction = _captureDetection.CaptureDuration > 0f
+            //     ? _captureDetection.CaptureTimer / _captureDetection.CaptureDuration
+            //     : 0f;
+            // _captureSlider.value = Mathf.Clamp01(captureFraction);
 
             if (_skillSlider != null && _playerSkill != null)
             {
@@ -124,7 +149,13 @@ namespace ParticleLife.UI
             if (state == GameState.Failed || state == GameState.MainMenu)
                 gameObject.SetActive(false);
             else if (state == GameState.Running)
+            {
+                // Invalidate caches so all text fields refresh on the first update after restart.
+                _lastPlayerCount = -1;
+                _lastTotalCount  = -1;
+                _lastSurvivalSec = -1;
                 gameObject.SetActive(true);
+            }
         }
 
     }

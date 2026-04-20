@@ -51,13 +51,22 @@ namespace ParticleLife.Rendering
         private Matrix4x4[]          _outlineMatrices;
         private Vector4[]            _outlineColors;
 
+        // Per-type lookup tables (indexed by type byte 0–255).
+        // Rebuilt once per Render() call — O(256) vs O(particleCount) per-particle calls.
+        private Vector4[] _colorCache;
+        private Vector4[] _playerColorCache;
+        private float[]   _scaleCache;
+
         private void Awake()
         {
-            _matrices        = new Matrix4x4[BatchSize];
-            _propertyBlock   = new MaterialPropertyBlock();
-            _colors          = new Vector4[BatchSize];
-            _outlineMatrices = new Matrix4x4[BatchSize];
-            _outlineColors   = new Vector4[BatchSize];
+            _matrices         = new Matrix4x4[BatchSize];
+            _propertyBlock    = new MaterialPropertyBlock();
+            _colors           = new Vector4[BatchSize];
+            _outlineMatrices  = new Matrix4x4[BatchSize];
+            _outlineColors    = new Vector4[BatchSize];
+            _colorCache       = new Vector4[256];
+            _playerColorCache = new Vector4[256];
+            _scaleCache       = new float[256];
 
             if (_particleMesh == null)
                 _particleMesh = CreateCircleMesh();
@@ -79,19 +88,32 @@ namespace ParticleLife.Rendering
         {
             if (_particleMesh == null || _particleMaterial == null) return;
 
+            // Rebuild per-type lookup tables once per call (O(256)) to avoid per-particle
+            // function calls with branches in the hot render loops below.
+            for (int t = 0; t < 256; t++)
+            {
+                Color c = TypeColor((byte)t);
+                _colorCache[t]       = new Vector4(c.r, c.g, c.b, c.a);
+                _playerColorCache[t] = new Vector4(
+                    Mathf.Min(c.r * _playerBrightnessMult, 1f),
+                    Mathf.Min(c.g * _playerBrightnessMult, 1f),
+                    Mathf.Min(c.b * _playerBrightnessMult, 1f), c.a);
+                _scaleCache[t] = typeRadii.IsCreated && t < typeRadii.Length
+                    ? typeRadii[t] * 2f : _particleScale;
+            }
+
             // ── 轮廓 Pass（仅玩家粒子，z=0.01f，先绘制在下层）────────────────
-            Vector4 outlineVec = new(_outlineColor.r, _outlineColor.g, _outlineColor.b, _outlineColor.a);
+            Vector4 outlineVec        = new(_outlineColor.r, _outlineColor.g, _outlineColor.b, _outlineColor.a);
             int     outlineBatchCount = 0;
 
             for (int i = 0; i < particleCount; i++)
             {
                 if (!isPlayerOwned[i]) continue;
 
-                float outlineScale = ParticleScale(types[i], typeRadii) * _outlineRelativeScale;
                 _outlineMatrices[outlineBatchCount] = Matrix4x4.TRS(
                     new Vector3(positions[i].x, positions[i].y, 0.01f),
                     Quaternion.identity,
-                    Vector3.one * outlineScale);
+                    Vector3.one * (_scaleCache[types[i]] * _outlineRelativeScale));
                 _outlineColors[outlineBatchCount] = outlineVec;
                 outlineBatchCount++;
 
@@ -120,21 +142,15 @@ namespace ParticleLife.Rendering
 
                 for (int b = 0; b < batchCount; b++)
                 {
-                    int i = batchStart + b;
+                    int  i    = batchStart + b;
+                    byte type = types[i];
 
                     _matrices[b] = Matrix4x4.TRS(
                         new Vector3(positions[i].x, positions[i].y, 0f),
                         Quaternion.identity,
-                        Vector3.one * ParticleScale(types[i], typeRadii));
+                        Vector3.one * _scaleCache[type]);
 
-                    Color baseColor = TypeColor(types[i]);
-                    if (isPlayerOwned[i])
-                        baseColor = new Color(
-                            Mathf.Min(baseColor.r * _playerBrightnessMult, 1f),
-                            Mathf.Min(baseColor.g * _playerBrightnessMult, 1f),
-                            Mathf.Min(baseColor.b * _playerBrightnessMult, 1f));
-
-                    _colors[b] = new Vector4(baseColor.r, baseColor.g, baseColor.b, baseColor.a);
+                    _colors[b] = isPlayerOwned[i] ? _playerColorCache[type] : _colorCache[type];
                 }
 
                 _propertyBlock.SetVectorArray("_BaseColor", _colors);

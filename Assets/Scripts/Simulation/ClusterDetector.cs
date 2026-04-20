@@ -33,6 +33,7 @@ namespace ParticleLife.Simulation
         private NativeArray<bool>      _isInCluster;
         private NativeQueue<int2>      _bfsQueue;   // x = particle index, y = non-owned hop depth
         private int                    _frameCounter;
+        private float                  _expansionRadiusSq;
 
         /// <summary>Number of particles in the player cluster this frame.</summary>
         public int ClusterParticleCount { get; private set; }
@@ -47,8 +48,9 @@ namespace ParticleLife.Simulation
             if (_simulation == null)
                 _simulation = GetComponent<ParticleSimulation>();
 
-            _isInCluster = new NativeArray<bool>(_simulation.MaxParticleCount, Allocator.Persistent);
-            _bfsQueue    = new NativeQueue<int2>(Allocator.Persistent);
+            _isInCluster       = new NativeArray<bool>(_simulation.MaxParticleCount, Allocator.Persistent);
+            _bfsQueue          = new NativeQueue<int2>(Allocator.Persistent);
+            _expansionRadiusSq = _expansionRadius * _expansionRadius;
         }
 
         private void LateUpdate()
@@ -116,7 +118,7 @@ namespace ParticleLife.Simulation
                     {
                         if (j >= count || _isInCluster[j]) continue;
 
-                        if (math.distance(positions[idx], positions[j]) > _expansionRadius)
+                        if (math.distancesq(positions[idx], positions[j]) > _expansionRadiusSq)
                             continue;
 
                         // Player-owned neighbors reset depth to 0; non-owned increment depth

@@ -52,6 +52,10 @@ namespace ParticleLife.Player
         private int[] _ufParent;
         private int[] _ufSize;
 
+        // Scratch buffer: player-owned indices collected each HandleSplits call.
+        private int[] _playerScratch;
+        private int   _playerScratchCount;
+
         // Visited marker array, reused for BFS in AssignInitialCluster.
         private bool[] _bfsVisited;
 
@@ -81,6 +85,7 @@ namespace ParticleLife.Player
             _bfsVisited    = new bool[maxCount];
             _ufParent      = new int[maxCount];
             _ufSize        = new int[maxCount];
+            _playerScratch = new int[maxCount];
             _adoptionQueue = new NativeQueue<int>(Allocator.Persistent);
 
             _gameState.OnStateChanged += OnStateChanged;
@@ -155,17 +160,21 @@ namespace ParticleLife.Player
             // 7. Report peak
             _gameState.ReportParticleCount(PlayerParticleCount);
 
-            // 8. Zero-particle survival countdown
+            // 8. Zero-particle → immediate failure
             if (PlayerParticleCount == 0)
-            {
-                _zeroTimer += Time.deltaTime;
-                if (_zeroTimer >= _zeroPatienceSec)
-                    _gameState.TransitionTo(GameState.Failed);
-            }
-            else
-            {
-                _zeroTimer = 0f;
-            }
+                _gameState.TransitionTo(GameState.Failed);
+
+            // [DISABLED] Previous 30-second grace period before failing:
+            // if (PlayerParticleCount == 0)
+            // {
+            //     _zeroTimer += Time.deltaTime;
+            //     if (_zeroTimer >= _zeroPatienceSec)
+            //         _gameState.TransitionTo(GameState.Failed);
+            // }
+            // else
+            // {
+            //     _zeroTimer = 0f;
+            // }
         }
 
         // ── Session reset ─────────────────────────────────────────────────────
@@ -186,18 +195,21 @@ namespace ParticleLife.Player
         /// Finds the particle with the most same-type neighbors within _connectionRadius,
         /// records its type as the player type, and BFS-adopts all same-type particles
         /// reachable via _connectionRadius chains from that center.
-        /// Guarantees a single connected component from frame 1. O(N²) one-time cost.
+        /// Guarantees a single connected component from frame 1.
+        /// Uses spatial grid when available: O(n×k) vs O(n²) fallback (k = grid cell density).
         /// </summary>
         private void AssignInitialCluster(int count)
         {
-            NativeArray<float2> positions = _simulation.PositionsRead;
-            NativeArray<byte>   types     = _simulation.Types;
+            NativeArray<float2>                   positions = _simulation.PositionsRead;
+            NativeArray<byte>                     types     = _simulation.Types;
+            NativeParallelMultiHashMap<int2, int> grid      = _simulation.Grid;
+            float                                 cellSize  = _simulation.CellSize;
 
             float scanSq  = _connectionRadius * _connectionRadius;
             float adoptSq = _connectionRadius * _connectionRadius;
+            bool  useGrid = cellSize > 0f && grid.IsCreated;
+            int   gridRange = useGrid ? (int)math.ceil(_connectionRadius / cellSize) : 0;
 
-            // Randomly select player type each session — prevents always starting as the same type.
-            // Special types (index >= TypeCount) are excluded.
             _playerType = (byte)UnityEngine.Random.Range(0, _simulation.TypeCount);
 
             // Step 1: find the particle of _playerType with the most same-type neighbors.
@@ -207,19 +219,36 @@ namespace ParticleLife.Player
             {
                 if (types[i] != _playerType) continue;
 
-                int    neighbors = 0;
                 float2 posI      = positions[i];
-                for (int j = 0; j < count; j++)
+                int    neighbors = 0;
+
+                if (useGrid)
                 {
-                    if (j == i || types[j] != _playerType) continue;
-                    if (math.distancesq(posI, positions[j]) < scanSq)
-                        neighbors++;
+                    int2 cell = (int2)math.floor(posI / cellSize);
+                    for (int dx = -gridRange; dx <= gridRange; dx++)
+                    for (int dy = -gridRange; dy <= gridRange; dy++)
+                    {
+                        int2 nc = cell + new int2(dx, dy);
+                        if (!grid.TryGetFirstValue(nc, out int j, out var it)) continue;
+                        do
+                        {
+                            if (j != i && types[j] == _playerType &&
+                                math.distancesq(posI, positions[j]) < scanSq)
+                                neighbors++;
+                        }
+                        while (grid.TryGetNextValue(out j, ref it));
+                    }
                 }
-                if (neighbors > bestNeighbors)
+                else
                 {
-                    bestNeighbors = neighbors;
-                    bestIndex     = i;
+                    for (int j = 0; j < count; j++)
+                    {
+                        if (j == i || types[j] != _playerType) continue;
+                        if (math.distancesq(posI, positions[j]) < scanSq) neighbors++;
+                    }
                 }
+
+                if (neighbors > bestNeighbors) { bestNeighbors = neighbors; bestIndex = i; }
             }
 
             // Fallback: chosen type has no particles — pick any non-special particle.
@@ -233,10 +262,7 @@ namespace ParticleLife.Player
                 _playerType = types[bestIndex];
             }
 
-            // Step 2: BFS flood-fill from bestIndex.
-            // Only particles reachable via a chain of _connectionRadius-adjacent same-type
-            // particles are adopted, guaranteeing one connected component.
-            // Reuse _bfsVisited as the "enqueued" marker (one-time allocation is fine).
+            // Step 2: BFS flood-fill from bestIndex via spatial grid.
             for (int i = 0; i < count; i++)
                 _bfsVisited[i] = false;
 
@@ -250,14 +276,35 @@ namespace ParticleLife.Player
                 int    current = queue.Dequeue();
                 float2 posC    = positions[current];
 
-                for (int j = 0; j < count; j++)
+                if (useGrid)
                 {
-                    if (_bfsVisited[j] || types[j] != _playerType) continue;
-                    if (math.distancesq(posC, positions[j]) >= adoptSq) continue;
-
-                    _bfsVisited[j] = true;
-                    _simulation.SetPlayerOwned(j, true);
-                    queue.Enqueue(j);
+                    int2 cell = (int2)math.floor(posC / cellSize);
+                    for (int dx = -gridRange; dx <= gridRange; dx++)
+                    for (int dy = -gridRange; dy <= gridRange; dy++)
+                    {
+                        int2 nc = cell + new int2(dx, dy);
+                        if (!grid.TryGetFirstValue(nc, out int j, out var it)) continue;
+                        do
+                        {
+                            if (_bfsVisited[j] || types[j] != _playerType) continue;
+                            if (math.distancesq(posC, positions[j]) >= adoptSq) continue;
+                            _bfsVisited[j] = true;
+                            _simulation.SetPlayerOwned(j, true);
+                            queue.Enqueue(j);
+                        }
+                        while (grid.TryGetNextValue(out j, ref it));
+                    }
+                }
+                else
+                {
+                    for (int j = 0; j < count; j++)
+                    {
+                        if (_bfsVisited[j] || types[j] != _playerType) continue;
+                        if (math.distancesq(posC, positions[j]) >= adoptSq) continue;
+                        _bfsVisited[j] = true;
+                        _simulation.SetPlayerOwned(j, true);
+                        queue.Enqueue(j);
+                    }
                 }
             }
 
@@ -274,18 +321,24 @@ namespace ParticleLife.Player
             NativeParallelMultiHashMap<int2, int> grid,
             float                                 cellSize)
         {
-            for (int i = 0; i < count; i++)
-            {
-                _ufParent[i] = i;
-                _ufSize[i]   = 1;
-            }
-
-            float threshSq  = _connectionRadius * _connectionRadius;
-            int   gridRange = (int)math.ceil(_connectionRadius / cellSize);
-
+            // Loop 1: init UF only for player particles + collect their indices.
+            // Skips ~(n-p)/n writes vs the old full-n init.
+            _playerScratchCount = 0;
             for (int i = 0; i < count; i++)
             {
                 if (!isPlayerOwned[i]) continue;
+                _ufParent[i] = i;
+                _ufSize[i]   = 1;
+                _playerScratch[_playerScratchCount++] = i;
+            }
+
+            // Loop 2: build UF via spatial grid (iterate scratch instead of full array).
+            float threshSq  = _connectionRadius * _connectionRadius;
+            int   gridRange = (int)math.ceil(_connectionRadius / cellSize);
+
+            for (int s = 0; s < _playerScratchCount; s++)
+            {
+                int i = _playerScratch[s];
 
                 int2 cell = new int2(
                     (int)math.floor(positions[i].x / cellSize),
@@ -306,20 +359,20 @@ namespace ParticleLife.Player
                 }
             }
 
-            // Find the largest connected component among player particles
+            // Loop 3: find largest component — O(p) via scratch.
             int mainRoot = -1;
             int mainSize = 0;
-            for (int i = 0; i < count; i++)
+            for (int s = 0; s < _playerScratchCount; s++)
             {
-                if (!isPlayerOwned[i]) continue;
+                int i = _playerScratch[s];
                 if (UFFind(i) != i) continue;
                 if (_ufSize[i] > mainSize) { mainSize = _ufSize[i]; mainRoot = i; }
             }
 
-            // Revert all player particles not in the main component
-            for (int i = 0; i < count; i++)
+            // Loop 4: revert non-main fragments — O(p) via scratch.
+            for (int s = 0; s < _playerScratchCount; s++)
             {
-                if (!isPlayerOwned[i]) continue;
+                int i = _playerScratch[s];
                 if (mainRoot >= 0 && UFFind(i) == mainRoot) continue;
                 _simulation.SetPlayerOwned(i, false);
             }

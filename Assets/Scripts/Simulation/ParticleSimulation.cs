@@ -176,6 +176,11 @@ namespace ParticleLife.Simulation
         private Unity.Mathematics.Random _cullRng;
         private int[] _cullTypeCounts;   // allocated in Awake; reused each cull batch
 
+        // Scratch buffers for ExecuteRepelNonPlayerParticles — avoids O(p) inner scan per candidate.
+        private float2[] _repelPlayerPos;
+        private float2[] _repelPlayerDir;
+        private int      _repelPlayerCount;
+
         // ── Job tracking ──────────────────────────────────────────────────────
         private JobHandle _pendingHandle;
         private bool      _jobPending;
@@ -262,6 +267,8 @@ namespace ParticleLife.Simulation
 
             _cullRng        = new Unity.Mathematics.Random(54321u);
             _cullTypeCounts = new int[_typeCount];
+            _repelPlayerPos = new float2[_maxParticleCount];
+            _repelPlayerDir = new float2[_maxParticleCount];
 
             // 初始化各类型粒子半径
             // Inspector 数组固定长度 10：[0..7] 普通类型，[8] 黑色，[9] 白色
@@ -352,7 +359,9 @@ namespace ParticleLife.Simulation
                 _unboundedWorld ? _spawnRadiusMin : 0f,
                 _unboundedWorld ? _spawnRadiusMax : 0f,
                 _unboundedWorld ? ComputeSmoothedMoveDir(CurrentPhysicsInputDir) : float2.zero,
-                _unboundedWorld ? _spawnDirectionBias : 0f);
+                _unboundedWorld ? _spawnDirectionBias : 0f,
+                _grid,
+                _cellSize);
 
             // Unbounded mode: teleport distant non-player particles back into the spawn ring.
             // Runs every CullEveryNFrames to amortise the O(N) scan cost.
@@ -741,6 +750,16 @@ namespace ParticleLife.Simulation
 
         private void ExecuteRepelNonPlayerParticles(float impulse, float2 centroid, float duration, float radius, float velocityBlend)
         {
+            // Pre-build player expansion direction buffer — O(n) once, avoids O(n) inner scan per candidate.
+            _repelPlayerCount = 0;
+            for (int j = 0; j < _particleCount; j++)
+            {
+                if (!_isPlayerOwned[j]) continue;
+                _repelPlayerPos[_repelPlayerCount] = _positionsRead[j];
+                _repelPlayerDir[_repelPlayerCount] = math.normalizesafe(_positionsRead[j] - centroid);
+                _repelPlayerCount++;
+            }
+
             float radiusSq = radius * radius;
 
             for (int i = 0; i < _particleCount; i++)
@@ -748,7 +767,7 @@ namespace ParticleLife.Simulation
                 if (_isPlayerOwned[i]) continue;
                 if (math.distancesq(_positionsRead[i], centroid) > radiusSq) continue;
                 // 只弹飞至少有一个玩家粒子正在向其扩张方向运动的粒子
-                if (!IsInExpansionPathOfAnyPlayerParticle(i, centroid)) continue;
+                if (!IsInExpansionPathOfAnyPlayerParticle(_positionsRead[i])) continue;
 
                 float2 dir        = _positionsRead[i] - centroid;
                 float  len        = math.length(dir);
@@ -759,18 +778,14 @@ namespace ParticleLife.Simulation
         }
 
         /// <summary>
-        /// Returns true if any player-owned particle j is expanding outward toward particle i.
-        /// Condition: particle i is "ahead" of j in j's outward direction from centroid.
+        /// Returns true if any player-owned particle is expanding outward toward posI.
+        /// Uses pre-built _repelPlayerPos/_repelPlayerDir buffers — O(p) with dense data access.
         /// </summary>
-        private bool IsInExpansionPathOfAnyPlayerParticle(int index, float2 centroid)
+        private bool IsInExpansionPathOfAnyPlayerParticle(float2 posI)
         {
-            float2 posI = _positionsRead[index];
-            for (int j = 0; j < _particleCount; j++)
+            for (int k = 0; k < _repelPlayerCount; k++)
             {
-                if (!_isPlayerOwned[j]) continue;
-                float2 posJ         = _positionsRead[j];
-                float2 expansionDir = math.normalizesafe(posJ - centroid);
-                if (math.dot(posI - posJ, expansionDir) > 0f) return true;
+                if (math.dot(posI - _repelPlayerPos[k], _repelPlayerDir[k]) > 0f) return true;
             }
             return false;
         }
@@ -1026,13 +1041,15 @@ namespace ParticleLife.Simulation
         /// </summary>
         private byte PickRarestType()
         {
-            int minCount = int.MaxValue;
-            for (int t = 0; t < _typeCount; t++)
-                if (_cullTypeCounts[t] < minCount) minCount = _cullTypeCounts[t];
-
+            // Single pass: find minCount and candidate count simultaneously.
+            int minCount   = int.MaxValue;
             int candidates = 0;
             for (int t = 0; t < _typeCount; t++)
-                if (_cullTypeCounts[t] == minCount) candidates++;
+            {
+                int c = _cullTypeCounts[t];
+                if      (c < minCount) { minCount = c; candidates = 1; }
+                else if (c == minCount)  candidates++;
+            }
 
             int pick = _cullRng.NextInt(0, candidates);
             int seen = 0;

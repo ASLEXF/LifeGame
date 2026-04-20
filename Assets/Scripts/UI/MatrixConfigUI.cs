@@ -51,6 +51,7 @@ namespace ParticleLife.UI
         private VisualElement _panel;
         private UIDocument    _document;
         private bool          _isOpen;
+        private bool          _lastIsAssigned;
         private Font          _runtimeUiFont;
         private StyleSheet    _matrixStyleSheet;
         private int           _matrixSizeSnapshot;
@@ -91,8 +92,12 @@ namespace ParticleLife.UI
             Keyboard kb = Keyboard.current;
             if (kb == null) return;
 
-            if (_matrixSizeSnapshot != _simulation.TotalTypeCount)
+            bool currentIsAssigned = _playerControl != null && _playerControl.IsAssigned;
+            bool needRebuild = _matrixSizeSnapshot != _simulation.TotalTypeCount
+                            || currentIsAssigned != _lastIsAssigned;
+            if (needRebuild)
             {
+                _lastIsAssigned = currentIsAssigned;
                 bool reopen = _isOpen;
                 BuildUI();
                 _isOpen = reopen;
