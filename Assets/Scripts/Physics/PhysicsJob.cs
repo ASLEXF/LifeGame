@@ -182,7 +182,7 @@ namespace ParticleLife.Physics
             // Applied to the entire visual cluster (IsInPlayerCluster), not just owned particles.
             // This makes the whole cluster respond cohesively to input rather than only the
             // owned core particles being pushed. Resistance and ExternalForce stay on IsPlayerOwned.
-            if (inCluster && math.length(PlayerInputDir) > 0.01f)
+            if (inCluster && !isRepelled && math.length(PlayerInputDir) > 0.01f)
                 force += PlayerInputDir * PlayerInputForce;
 
             // ── Player external-force resistance ───────────────────────────
