@@ -490,8 +490,8 @@ MonoBehaviour:
   _shieldCooldown: 0
   _shieldPlayerRepulsionScale: 15
   _scatterFraction: 0.2
-  _scatterImpulse: 20
-  _repelImpulseMax: 50
+  _scatterImpulse: 8
+  _repelImpulseMax: 20
   _repelRatioInfluence: 0.549
   _repelVelocityBlend: 0.657
   _repelDuration: 2
@@ -499,7 +499,7 @@ MonoBehaviour:
   _input: {fileID: 83642379}
   _simulation: {fileID: 83642377}
   _playerControl: {fileID: 83642376}
-  _gameState: {fileID: 2072673226}
+  _gameState: {fileID: 0}
 --- !u!1 &519420028
 GameObject:
   m_ObjectHideFlags: 0
@@ -959,7 +959,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.UI.MatrixConfigUI
   _simulation: {fileID: 83642377}
   _configPersistence: {fileID: 1200010011}
-  _playerControl: {fileID: 83642376}
+  _playerControl: {fileID: 0}
 --- !u!1 &1200010100
 GameObject:
   m_ObjectHideFlags: 0
@@ -1854,11 +1854,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.UI.FailureScreen
   _canvasGroup: {fileID: 1200010502}
-  _titleText: {fileID: 1200010523}
+  _titleText: {fileID: 0}
   _survivalTimeText: {fileID: 1200010533}
   _peakCountText: {fileID: 1200010543}
   _restartButton: {fileID: 1200010554}
-  _restartButtonText: {fileID: 1200010563}
+  _restartButtonText: {fileID: 0}
   _fadeDuration: 0.3
   _gameState: {fileID: 2072673226}
   _simulation: {fileID: 83642377}
@@ -4833,7 +4833,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1886440756
 MonoBehaviour:
   m_ObjectHideFlags: 0
