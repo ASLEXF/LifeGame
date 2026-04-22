@@ -18,8 +18,8 @@ namespace ParticleLife.Management
     {
         public enum Language { Chinese, English }
 
-        /// <summary>Currently active language. Default: Chinese.</summary>
-        public static Language Current { get; private set; } = Language.Chinese;
+        /// <summary>Currently active language. Default: English.</summary>
+        public static Language Current { get; private set; } = Language.English;
 
         /// <summary>Fired whenever <see cref="SetLanguage"/> changes the active language.</summary>
         public static event Action<Language> OnLanguageChanged;
@@ -115,7 +115,7 @@ namespace ParticleLife.Management
                     ["start"]            = "Start Game",
                     ["config"]           = "Configure Matrix",
                     ["hint_keyboard"]    = "Press Enter / Space to Start",
-                    ["lang_toggle"]      = "中文",
+                    ["lang_toggle"]      = "简中",
 
                     // ── HUD ────────────────────────────────────────────
                     ["hud_player_count"] = "Player: {0}",
