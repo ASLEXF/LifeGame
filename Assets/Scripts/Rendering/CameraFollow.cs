@@ -29,7 +29,7 @@ namespace ParticleLife.Rendering
         [Tooltip("无边界模式下的正交摄像机尺寸（世界单位）")]
         [SerializeField] private float _unboundedOrthoSize = 35f;
         [Tooltip("无边界模式下的摄像机平滑时间（秒）。值越小越贴近玩家，0 = 每帧直接对齐质心（更跟手、减少与物理步错位感）。建议 0–1")]
-        [SerializeField] private float _unboundedSmoothTime = 0.5f;
+        [SerializeField] private float _unboundedSmoothTime = 0.75f;
         [Tooltip("无边界模式下的摄像机最大移动速度（世界单位/秒），0 = 不限制。应 ≥ 玩家最大速度以避免画面滞后")]
         [SerializeField] private float _unboundedMaxSpeed   = 0f;
 
