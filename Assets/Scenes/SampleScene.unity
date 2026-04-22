@@ -308,7 +308,7 @@ MonoBehaviour:
   _gravityMatrixConfig: []
   _renderer: {fileID: 83642378}
   _spawnRipple: {fileID: 83642380}
-  _gameInput: {fileID: 0}
+  _gameInput: {fileID: 83642379}
 --- !u!114 &83642378
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -490,8 +490,8 @@ MonoBehaviour:
   _shieldCooldown: 0
   _shieldPlayerRepulsionScale: 15
   _scatterFraction: 0.2
-  _scatterImpulse: 8
-  _repelImpulseMax: 20
+  _scatterImpulse: 20
+  _repelImpulseMax: 100
   _repelRatioInfluence: 0.549
   _repelVelocityBlend: 0.657
   _repelDuration: 2
@@ -499,7 +499,7 @@ MonoBehaviour:
   _input: {fileID: 83642379}
   _simulation: {fileID: 83642377}
   _playerControl: {fileID: 83642376}
-  _gameState: {fileID: 0}
+  _gameState: {fileID: 2072673226}
 --- !u!1 &519420028
 GameObject:
   m_ObjectHideFlags: 0
@@ -652,7 +652,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.Rendering.CameraFollow
   _unboundedMode: 1
   _unboundedOrthoSize: 35
-  _unboundedSmoothTime: 0.75
+  _unboundedSmoothTime: 1.5
   _unboundedMaxSpeed: 50
   _extrapolateWithPlayerVelocity: 1
   _followStrength: 0.15
@@ -959,7 +959,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.UI.MatrixConfigUI
   _simulation: {fileID: 83642377}
   _configPersistence: {fileID: 1200010011}
-  _playerControl: {fileID: 0}
+  _playerControl: {fileID: 83642376}
 --- !u!1 &1200010100
 GameObject:
   m_ObjectHideFlags: 0
@@ -4833,7 +4833,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &1886440756
 MonoBehaviour:
   m_ObjectHideFlags: 0
