@@ -105,17 +105,23 @@ namespace ParticleLife.Rendering
             NativeArray<byte>   types,
             NativeArray<bool>   isPlayerOwned,
             int                 particleCount,
-            NativeArray<float>  typeRadii)
+            NativeArray<float>  typeRadii,
+            int[]               playerScratch,
+            int                 playerScratchCount)
         {
             if (_particleMesh == null || _particleMaterial == null) return;
 
-            // ── 轮廓 Pass（仅玩家粒子，z=0.01f，先绘制在下层）────────────────
+            // ── 轮廓 Pass O(p)（仅玩家粒子，z=0.01f，先绘制在下层）─────────
+            // Uses pre-built player index scratch from PlayerControl — one frame stale but
+            // imperceptible. isPlayerOwned[i] check filters any shed particles in the scratch.
             Vector4 outlineVec        = new(_outlineColor.r, _outlineColor.g, _outlineColor.b, _outlineColor.a);
             int     outlineBatchCount = 0;
+            int     scratchLen        = playerScratch != null ? playerScratchCount : 0;
 
-            for (int i = 0; i < particleCount; i++)
+            for (int s = 0; s < scratchLen; s++)
             {
-                if (!isPlayerOwned[i]) continue;
+                int i = playerScratch[s];
+                if ((uint)i >= (uint)particleCount || !isPlayerOwned[i]) continue;
 
                 _outlineMatrices[outlineBatchCount] = ScaleTranslate(
                     positions[i].x, positions[i].y, 0.01f,

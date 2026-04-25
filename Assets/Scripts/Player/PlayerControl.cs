@@ -164,6 +164,11 @@ namespace ParticleLife.Player
             if (PlayerParticleCount == 0)
                 _gameState.TransitionTo(GameState.Failed);
 
+            // Supply player scratch for the renderer's outline pass next frame (O(p) vs O(n)).
+            // Runs at order 10 — ParticleSimulation.Render() (order 0) already fired this frame,
+            // so this scratch is consumed on the next frame. One-frame stale; imperceptible.
+            _simulation.SetPlayerRenderScratch(_playerScratch, _playerScratchCount);
+
             // [DISABLED] Previous 30-second grace period before failing:
             // if (PlayerParticleCount == 0)
             // {

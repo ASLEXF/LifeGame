@@ -158,6 +158,12 @@ namespace ParticleLife.Simulation
 
         /// <summary>Average velocity of player-owned particles (after last physics complete). Used for camera extrapolation.</summary>
         private float2 _playerOwnedAverageVelocity;
+        private NativeReference<float2> _playerVelocityResult;
+
+        // Player index scratch for the outline render pass — supplied by PlayerControl each
+        // LateUpdate (order 10, after our order-0 Render call). One frame stale; imperceptible.
+        private int[] _playerRenderScratch;
+        private int   _playerRenderScratchCount;
 
         // ── Supporting systems ────────────────────────────────────────────────
         private GravityMatrix                         _gravityMatrix;
@@ -239,6 +245,7 @@ namespace ParticleLife.Simulation
             _idleTime              = new NativeArray<float> (_maxParticleCount, Allocator.Persistent);
             _externalForceOnPlayer = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
             _repelTimer            = new NativeArray<float> (_maxParticleCount, Allocator.Persistent);
+            _playerVelocityResult  = new NativeReference<float2>(float2.zero, Allocator.Persistent);
 
             _gravityMatrix = GravityMatrix.CreateDefault(_typeCount, Allocator.Persistent);
 
@@ -439,19 +446,31 @@ namespace ParticleLife.Simulation
             NativeArray<float2> renderPositions = _positionsRead;
             if (_visualSmoothing == VisualSmoothingMode.VelocityExtrapolation)
             {
-                // Single pass: extrapolate render positions and accumulate player-owned average velocity.
-                // Eliminates the separate O(n) scan from UpdatePlayerOwnedAverageVelocity.
-                float  rem      = Mathf.Min(Time.time - Time.fixedTime, Time.fixedDeltaTime * 2f);
-                float2 velSum   = float2.zero;
-                int    velCount = 0;
-                int    n        = _particleCount;
-                for (int i = 0; i < n; i++)
+                float rem = Mathf.Min(Time.time - Time.fixedTime, Time.fixedDeltaTime * 2f);
+
+                // Two Burst jobs scheduled in parallel:
+                //   ExtrapolatePositionsJob      — writes _positionsRender
+                //   ComputePlayerAverageVelocityJob — writes _playerVelocityResult
+                // Both declare Velocities as [ReadOnly], so the Job Safety System allows
+                // them to run concurrently on separate worker threads.
+                var extrapolateHandle = new ExtrapolatePositionsJob
                 {
-                    float2 vel          = _velocities[i];
-                    _positionsRender[i] = _positionsRead[i] + vel * rem;
-                    if (_isPlayerOwned[i]) { velSum += vel; velCount++; }
-                }
-                _playerOwnedAverageVelocity = velCount > 0 ? velSum / velCount : float2.zero;
+                    PositionsRead   = _positionsRead,
+                    Velocities      = _velocities,
+                    Rem             = rem,
+                    PositionsRender = _positionsRender,
+                }.Schedule(_particleCount, 64);
+
+                var playerVelHandle = new ComputePlayerAverageVelocityJob
+                {
+                    Velocities    = _velocities,
+                    IsPlayerOwned = _isPlayerOwned,
+                    ParticleCount = _particleCount,
+                    Result        = _playerVelocityResult,
+                }.Schedule();
+
+                JobHandle.CombineDependencies(extrapolateHandle, playerVelHandle).Complete();
+                _playerOwnedAverageVelocity = _playerVelocityResult.Value;
                 renderPositions = _positionsRender;
             }
             else
@@ -459,7 +478,8 @@ namespace ParticleLife.Simulation
                 UpdatePlayerOwnedAverageVelocity();
             }
 
-            _renderer.Render(renderPositions, _types, _isPlayerOwned, _particleCount, _typeRadiiNative);
+            _renderer.Render(renderPositions, _types, _isPlayerOwned, _particleCount, _typeRadiiNative,
+                _playerRenderScratch, _playerRenderScratchCount);
         }
 
         private void OnDestroy()
@@ -482,6 +502,7 @@ namespace ParticleLife.Simulation
             _externalForceOnPlayer.Dispose();
             _typeRadiiNative      .Dispose();
             _repelTimer           .Dispose();
+            _playerVelocityResult .Dispose();
             _gravityMatrix        .Dispose();
             _grid                 .Dispose();
         }
@@ -918,6 +939,17 @@ namespace ParticleLife.Simulation
         {
             if ((uint)index < (uint)_particleCount)
                 _isInPlayerCluster[index] = inCluster;
+        }
+
+        /// <summary>
+        /// Stores a pre-built player index list for the outline render pass (O(p) vs O(n)).
+        /// Called by PlayerControl.LateUpdate() (order 10) after its scratch is rebuilt;
+        /// used by the next frame's Render() call (order 0).
+        /// </summary>
+        public void SetPlayerRenderScratch(int[] scratch, int count)
+        {
+            _playerRenderScratch      = scratch;
+            _playerRenderScratchCount = count;
         }
 
         /// <summary>
