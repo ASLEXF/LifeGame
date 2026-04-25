@@ -300,7 +300,7 @@ MonoBehaviour:
   _spawnDirectionBias: 0.7
   _spawnDirWindowSec: 2
   _initialSpawnRadiusMin: 0
-  _fixedPhysicsHz: 120
+  _fixedPhysicsHz: 60
   _visualSmoothing: 1
   _spawnGroupSizeMin: 10
   _spawnGroupSizeMax: 50

@@ -162,8 +162,9 @@ namespace ParticleLife.Simulation
 
         // Player index scratch for the outline render pass — supplied by PlayerControl each
         // LateUpdate (order 10, after our order-0 Render call). One frame stale; imperceptible.
-        private int[] _playerRenderScratch;
-        private int   _playerRenderScratchCount;
+        // NativeArray so PlayerControl can pass its own scratch without copying.
+        private NativeArray<int> _playerRenderScratch;
+        private int              _playerRenderScratchCount;
 
         // ── Supporting systems ────────────────────────────────────────────────
         private GravityMatrix                         _gravityMatrix;
@@ -901,7 +902,9 @@ namespace ParticleLife.Simulation
                 _jobPending = false;
             }
 
-            for (int i = 0; i < _maxParticleCount; i++)
+            // Only clear the active range; indices >= _particleCount were never written.
+            int activeCount = _particleCount;
+            for (int i = 0; i < activeCount; i++)
             {
                 _positionsRead[i]         = float2.zero;
                 _positionsWrite[i]        = float2.zero;
@@ -914,9 +917,10 @@ namespace ParticleLife.Simulation
                 _repelTimer[i]            = 0f;
             }
 
-            _particleCount    = 0;
-            _playerInputDir      = float2.zero;
-            _playerParticleCount = 0;
+            _particleCount            = 0;
+            _playerInputDir           = float2.zero;
+            _playerParticleCount      = 0;
+            _playerRenderScratchCount = 0;
 
             SpawnInitialParticles();
         }
@@ -946,14 +950,15 @@ namespace ParticleLife.Simulation
         /// Called by PlayerControl.LateUpdate() (order 10) after its scratch is rebuilt;
         /// used by the next frame's Render() call (order 0).
         /// </summary>
-        public void SetPlayerRenderScratch(int[] scratch, int count)
+        public void SetPlayerRenderScratch(NativeArray<int> scratch, int count)
         {
             _playerRenderScratch      = scratch;
             _playerRenderScratchCount = count;
         }
 
         /// <summary>
-        /// Clears all cluster membership flags. Call before re-marking each frame.
+        /// Clears all cluster membership flags. Clearing is normally handled inside
+        /// MarkPlayerClusterJob; this method exists as a utility for edge cases.
         /// </summary>
         public void ClearPlayerClusterFlags()
         {

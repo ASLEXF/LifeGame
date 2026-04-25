@@ -99,7 +99,7 @@ namespace ParticleLife.Core
                 entries[a * total + b] = new GravityEntry
                 {
                     AttractionStrength = a == b ? 20f : rng.NextFloat(-15f, 30f),
-                    RepulsionStrength  = 8f,
+                    RepulsionStrength  = 14f,
                     DistanceThreshold  = 3f + rng.NextFloat(0f, 2f),
                 };
             }
@@ -112,38 +112,38 @@ namespace ParticleLife.Core
             {
                 // Normal → Black: 无吸引力，但近距斥力防止重叠
                 entries[a * total + black] = new GravityEntry
-                    { AttractionStrength = 0f, RepulsionStrength = 8f, DistanceThreshold = 3f };
+                    { AttractionStrength = 0f, RepulsionStrength = 14f, DistanceThreshold = 3f };
 
                 // Black → Normal: 无吸引力，但近距斥力防止重叠
                 entries[black * total + a] = new GravityEntry
-                    { AttractionStrength = 0f, RepulsionStrength = 8f, DistanceThreshold = 3f };
+                    { AttractionStrength = 0f, RepulsionStrength = 14f, DistanceThreshold = 3f };
 
                 // Normal → White: randomised (keeps ecosystem variety)
                 entries[a * total + white] = new GravityEntry
                 {
                     AttractionStrength = rng.NextFloat(-10f, 25f),
-                    RepulsionStrength  = 8f,
+                    RepulsionStrength  = 14f,
                     DistanceThreshold  = 3f + rng.NextFloat(0f, 2f),
                 };
 
                 // White → Normal: strong attraction (white chases all normal types)
                 entries[white * total + a] = new GravityEntry
-                    { AttractionStrength = 20f, RepulsionStrength = 5f, DistanceThreshold = 4f };
+                    { AttractionStrength = 20f, RepulsionStrength = 9f, DistanceThreshold = 4f };
             }
 
             // ── Black self + Black ↔ White ────────────────────────────────────
             entries[black * total + black] = new GravityEntry
-                { AttractionStrength = 25f, RepulsionStrength = 3f, DistanceThreshold = 3.5f };
+                { AttractionStrength = 25f, RepulsionStrength = 5f, DistanceThreshold = 3.5f };
 
             entries[black * total + white] = new GravityEntry
-                { AttractionStrength = 0f, RepulsionStrength = 8f, DistanceThreshold = 3f };
+                { AttractionStrength = 0f, RepulsionStrength = 14f, DistanceThreshold = 3f };
 
             entries[white * total + black] = new GravityEntry
-                { AttractionStrength = 0f, RepulsionStrength = 8f, DistanceThreshold = 3f };
+                { AttractionStrength = 0f, RepulsionStrength = 14f, DistanceThreshold = 3f };
 
             // ── White self ────────────────────────────────────────────────────
             entries[white * total + white] = new GravityEntry
-                { AttractionStrength = 15f, RepulsionStrength = 8f, DistanceThreshold = 3.5f };
+                { AttractionStrength = 15f, RepulsionStrength = 14f, DistanceThreshold = 3.5f };
 
             return new GravityMatrix { TypeCount = total, Entries = entries };
         }

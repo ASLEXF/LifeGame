@@ -2,6 +2,7 @@ using ParticleLife.Input;
 using ParticleLife.Management;
 using ParticleLife.Simulation;
 using Unity.Collections;
+using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using Random = UnityEngine.Random;
@@ -53,8 +54,9 @@ namespace ParticleLife.Player
         private int[] _ufSize;
 
         // Scratch buffer: player-owned indices collected each HandleSplits call.
-        private int[] _playerScratch;
-        private int   _playerScratchCount;
+        // NativeArray so it can be passed directly to MarkPlayerClusterJob without copying.
+        private NativeArray<int> _playerScratch;
+        private int              _playerScratchCount;
 
         // Visited marker array, reused for BFS in AssignInitialCluster.
         private bool[] _bfsVisited;
@@ -85,7 +87,7 @@ namespace ParticleLife.Player
             _bfsVisited    = new bool[maxCount];
             _ufParent      = new int[maxCount];
             _ufSize        = new int[maxCount];
-            _playerScratch = new int[maxCount];
+            _playerScratch = new NativeArray<int>(maxCount, Allocator.Persistent);
             _adoptionQueue = new NativeQueue<int>(Allocator.Persistent);
 
             _gameState.OnStateChanged += OnStateChanged;
@@ -100,8 +102,8 @@ namespace ParticleLife.Player
             if (_gameState != null)
                 _gameState.OnStateChanged -= OnStateChanged;
 
-            if (_adoptionQueue.IsCreated)
-                _adoptionQueue.Dispose();
+            if (_playerScratch.IsCreated) _playerScratch.Dispose();
+            if (_adoptionQueue.IsCreated) _adoptionQueue.Dispose();
         }
 
         private void OnStateChanged(GameState state)
@@ -143,8 +145,21 @@ namespace ParticleLife.Player
             // 2. Centroid + count — O(p) via scratch built in HandleSplits Loop 1.
             (ClusterCentroid, PlayerParticleCount) = ComputeCentroidAndCount(positions, isPlayerOwned, _playerScratch, _playerScratchCount);
 
-            // 3. Mark cluster membership for input-force injection (next FixedUpdate)
-            MarkPlayerCluster(positions, isPlayerOwned, count);
+            // 3. Mark cluster membership for input-force injection (next FixedUpdate).
+            // Burst IJob: clears IsInPlayerCluster then marks player + neighbors. O(p × grid²) in Burst.
+            new MarkPlayerClusterJob
+            {
+                PlayerScratch      = _playerScratch,
+                PlayerScratchCount = _playerScratchCount,
+                Positions          = positions,
+                IsPlayerOwned      = isPlayerOwned,
+                Grid               = _simulation.Grid,
+                ParticleCount      = count,
+                CellSize           = _simulation.CellSize,
+                ThresholdSq        = _connectionRadius * _connectionRadius,
+                GridRange          = (int)math.ceil(_connectionRadius / _simulation.CellSize),
+                IsInPlayerCluster  = _simulation.IsInPlayerCluster,
+            }.Schedule().Complete();
 
             // 4. Input direction + cluster size + centroid → physics job
             _simulation.SetPlayerInput(ResolveDirection(), PlayerParticleCount, ClusterCentroid);
@@ -413,7 +428,7 @@ namespace ParticleLife.Player
         private static (float2 centroid, int playerCount) ComputeCentroidAndCount(
             NativeArray<float2> positions,
             NativeArray<bool>   isPlayerOwned,
-            int[]               playerScratch,
+            NativeArray<int>    playerScratch,
             int                 playerScratchCount)
         {
             float2 sum = float2.zero;
@@ -426,56 +441,6 @@ namespace ParticleLife.Player
                 n++;
             }
             return n > 0 ? (sum / n, n) : (float2.zero, 0);
-        }
-
-        // ── Cluster membership marking ────────────────────────────────────────
-
-        /// <summary>
-        /// Clears and rebuilds IsInPlayerCluster each LateUpdate.
-        /// Marks every player-owned particle plus any particle within _connectionRadius
-        /// of a player-owned particle (regardless of type). Result is read by PhysicsJob
-        /// the next FixedUpdate to apply player input force to the whole visual cluster.
-        /// O(P × gridRange² × k) — P=player count, k=avg particles per cell.
-        /// </summary>
-        private void MarkPlayerCluster(
-            NativeArray<float2> positions,
-            NativeArray<bool>   isPlayerOwned,
-            int                 count)
-        {
-            _simulation.ClearPlayerClusterFlags();
-
-            NativeParallelMultiHashMap<int2, int> grid      = _simulation.Grid;
-            float                                 cellSize  = _simulation.CellSize;
-            float                                 threshSq  = _connectionRadius * _connectionRadius;
-            int gridRange = (int)math.ceil(_connectionRadius / cellSize);
-
-            // Outer loop: O(p) via scratch instead of O(n). Scratch built by HandleSplits;
-            // isPlayerOwned check filters any entries reverted since then.
-            for (int s = 0; s < _playerScratchCount; s++)
-            {
-                int i = _playerScratch[s];
-                if (!isPlayerOwned[i]) continue;
-
-                _simulation.SetInPlayerCluster(i, true);
-
-                int2 cell = new int2(
-                    (int)math.floor(positions[i].x / cellSize),
-                    (int)math.floor(positions[i].y / cellSize));
-
-                for (int dx = -gridRange; dx <= gridRange; dx++)
-                for (int dy = -gridRange; dy <= gridRange; dy++)
-                {
-                    int2 neighborCell = new int2(cell.x + dx, cell.y + dy);
-                    if (!grid.TryGetFirstValue(neighborCell, out int j, out var it)) continue;
-                    do
-                    {
-                        if (j < count && !isPlayerOwned[j] &&
-                            math.distancesq(positions[i], positions[j]) < threshSq)
-                            _simulation.SetInPlayerCluster(j, true);
-                    }
-                    while (grid.TryGetNextValue(out j, ref it));
-                }
-            }
         }
 
         // ── Adoption ──────────────────────────────────────────────────────────
@@ -523,6 +488,7 @@ namespace ParticleLife.Player
                         if (math.distancesq(positions[idx], positions[j]) < cellSizeSq)
                         {
                             _simulation.SetPlayerOwned(j, true);
+                            _playerScratch[_playerScratchCount++] = j;  // keep scratch current for ShedEdge
                             queue.Enqueue(j);
                         }
                     }
@@ -540,27 +506,30 @@ namespace ParticleLife.Player
             NativeArray<float2> velocities,
             int count, float2 centroid)
         {
-            // Loop 1: O(n) — collect current player indices into _playerScratch, find maxDistSq.
+            // Scratch built by HandleSplits Loop 1 + augmented by AdoptSameTypeBFS.
+            // May contain stale reverted entries — isPlayerOwned[i] check filters them.
+            if (_playerScratchCount == 0) return;
+
+            // Loop 1: O(p) — compute maxDistSq from existing scratch (no O(n) rebuild).
             float maxDistSq = 0f;
-            _playerScratchCount = 0;
-            for (int i = 0; i < count; i++)
+            for (int s = 0; s < _playerScratchCount; s++)
             {
+                int i = _playerScratch[s];
                 if (!isPlayerOwned[i]) continue;
                 float dsq = math.distancesq(positions[i], centroid);
                 if (dsq > maxDistSq) maxDistSq = dsq;
-                _playerScratch[_playerScratchCount++] = i;
             }
-            if (_playerScratchCount == 0) return;
             if (maxDistSq <= 0f) return; // 单粒子或所有粒子重叠——无分布可削减
 
             float edgeThreshSq = (1f - _edgeFraction) * maxDistSq;
             float maxVel       = _simulation.MaxVelocity;
             float dt           = Time.deltaTime;
 
-            // Loop 2: O(p) — iterate only player-owned indices collected above.
+            // Loop 2: O(p) — shed outermost fast-moving player particles.
             for (int s = 0; s < _playerScratchCount; s++)
             {
                 int i = _playerScratch[s];
+                if (!isPlayerOwned[i]) continue;
                 if (math.distancesq(positions[i], centroid) < edgeThreshSq) continue;
 
                 float speedRatio = math.saturate(math.length(velocities[i]) / maxVel);

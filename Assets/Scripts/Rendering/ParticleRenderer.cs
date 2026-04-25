@@ -106,7 +106,7 @@ namespace ParticleLife.Rendering
             NativeArray<bool>   isPlayerOwned,
             int                 particleCount,
             NativeArray<float>  typeRadii,
-            int[]               playerScratch,
+            NativeArray<int>    playerScratch,
             int                 playerScratchCount)
         {
             if (_particleMesh == null || _particleMaterial == null) return;
@@ -116,7 +116,7 @@ namespace ParticleLife.Rendering
             // imperceptible. isPlayerOwned[i] check filters any shed particles in the scratch.
             Vector4 outlineVec        = new(_outlineColor.r, _outlineColor.g, _outlineColor.b, _outlineColor.a);
             int     outlineBatchCount = 0;
-            int     scratchLen        = playerScratch != null ? playerScratchCount : 0;
+            int     scratchLen        = playerScratch.IsCreated ? playerScratchCount : 0;
 
             for (int s = 0; s < scratchLen; s++)
             {

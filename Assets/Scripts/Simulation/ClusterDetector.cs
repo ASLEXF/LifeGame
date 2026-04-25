@@ -34,6 +34,9 @@ namespace ParticleLife.Simulation
         private NativeQueue<int2>      _bfsQueue;   // x = particle index, y = non-owned hop depth
         private int                    _frameCounter;
         private float                  _expansionRadiusSq;
+        // Dirty list: indices set to true this Detect() call, cleared at the start of the next.
+        private int[]                  _dirtyList;
+        private int                    _dirtyCount;
 
         /// <summary>Number of particles in the player cluster this frame.</summary>
         public int ClusterParticleCount { get; private set; }
@@ -51,6 +54,7 @@ namespace ParticleLife.Simulation
             _isInCluster       = new NativeArray<bool>(_simulation.MaxParticleCount, Allocator.Persistent);
             _bfsQueue          = new NativeQueue<int2>(Allocator.Persistent);
             _expansionRadiusSq = _expansionRadius * _expansionRadius;
+            _dirtyList         = new int[_simulation.MaxParticleCount];
         }
 
         private void LateUpdate()
@@ -81,8 +85,10 @@ namespace ParticleLife.Simulation
             NativeParallelMultiHashMap<int2, int> grid          = _simulation.Grid;
             float                                 cellSize      = _simulation.CellSize;
 
-            for (int i = 0; i < count; i++)
-                _isInCluster[i] = false;
+            // Clear only previously marked particles — O(cluster size) vs O(n=5000).
+            for (int i = 0; i < _dirtyCount; i++)
+                _isInCluster[_dirtyList[i]] = false;
+            _dirtyCount = 0;
 
             NativeQueue<int2> queue = _bfsQueue;
             queue.Clear();
@@ -93,6 +99,7 @@ namespace ParticleLife.Simulation
             {
                 if (!isPlayerOwned[i]) continue;
                 _isInCluster[i] = true;
+                _dirtyList[_dirtyCount++] = i;
                 queue.Enqueue(new int2(i, 0));
                 clusterCount++;
             }
@@ -126,6 +133,7 @@ namespace ParticleLife.Simulation
                         if (nextDepth > _maxNonOwnedHops) continue;
 
                         _isInCluster[j] = true;
+                        _dirtyList[_dirtyCount++] = j;
                         queue.Enqueue(new int2(j, nextDepth));
                         clusterCount++;
                     }
