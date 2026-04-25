@@ -140,8 +140,8 @@ namespace ParticleLife.Player
             // 1. Split detection: revert fragments outside the main connected component
             HandleSplits(positions, isPlayerOwned, count, _simulation.Grid, _simulation.CellSize);
 
-            // 2. Centroid + count over all isPlayerOwned particles
-            (ClusterCentroid, PlayerParticleCount) = ComputeCentroidAndCount(positions, isPlayerOwned, count);
+            // 2. Centroid + count — O(p) via scratch built in HandleSplits Loop 1.
+            (ClusterCentroid, PlayerParticleCount) = ComputeCentroidAndCount(positions, isPlayerOwned, _playerScratch, _playerScratchCount);
 
             // 3. Mark cluster membership for input-force injection (next FixedUpdate)
             MarkPlayerCluster(positions, isPlayerOwned, count);
@@ -402,15 +402,20 @@ namespace ParticleLife.Player
 
         // ── Centroid + Count (single pass) ───────────────────────────────────
 
+        // Iterates playerScratch (O(p)) instead of the full particle array (O(n)).
+        // playerScratch is a superset of current player-owned indices (HandleSplits may have
+        // reverted some), so isPlayerOwned[i] check filters out any stale entries.
         private static (float2 centroid, int playerCount) ComputeCentroidAndCount(
             NativeArray<float2> positions,
             NativeArray<bool>   isPlayerOwned,
-            int count)
+            int[]               playerScratch,
+            int                 playerScratchCount)
         {
             float2 sum = float2.zero;
             int    n   = 0;
-            for (int i = 0; i < count; i++)
+            for (int s = 0; s < playerScratchCount; s++)
             {
+                int i = playerScratch[s];
                 if (!isPlayerOwned[i]) continue;
                 sum += positions[i];
                 n++;
@@ -439,8 +444,11 @@ namespace ParticleLife.Player
             float                                 threshSq  = _connectionRadius * _connectionRadius;
             int gridRange = (int)math.ceil(_connectionRadius / cellSize);
 
-            for (int i = 0; i < count; i++)
+            // Outer loop: O(p) via scratch instead of O(n). Scratch built by HandleSplits;
+            // isPlayerOwned check filters any entries reverted since then.
+            for (int s = 0; s < _playerScratchCount; s++)
             {
+                int i = _playerScratch[s];
                 if (!isPlayerOwned[i]) continue;
 
                 _simulation.SetInPlayerCluster(i, true);
@@ -479,14 +487,17 @@ namespace ParticleLife.Player
             NativeArray<byte>   types,
             int                 count)
         {
-            NativeParallelMultiHashMap<int2, int> grid     = _simulation.Grid;
-            float                                 cellSize = _simulation.CellSize;
-            NativeQueue<int>                      queue    = _adoptionQueue;
+            NativeParallelMultiHashMap<int2, int> grid       = _simulation.Grid;
+            float                                 cellSize   = _simulation.CellSize;
+            float                                 cellSizeSq = cellSize * cellSize;
+            NativeQueue<int>                      queue      = _adoptionQueue;
             queue.Clear();
 
-            // Seed: all currently player-owned particles
-            for (int i = 0; i < count; i++)
+            // Seed from _playerScratch (O(p)) instead of full array (O(n)).
+            // Scratch built by HandleSplits this frame; check isPlayerOwned for reverted entries.
+            for (int s = 0; s < _playerScratchCount; s++)
             {
+                int i = _playerScratch[s];
                 if (isPlayerOwned[i])
                     queue.Enqueue(i);
             }
@@ -504,7 +515,7 @@ namespace ParticleLife.Player
                     do
                     {
                         if (j >= count || isPlayerOwned[j] || types[j] != _playerType) continue;
-                        if (math.distance(positions[idx], positions[j]) < cellSize)
+                        if (math.distancesq(positions[idx], positions[j]) < cellSizeSq)
                         {
                             _simulation.SetPlayerOwned(j, true);
                             queue.Enqueue(j);
@@ -524,25 +535,27 @@ namespace ParticleLife.Player
             NativeArray<float2> velocities,
             int count, float2 centroid)
         {
-            float maxDistSq   = 0f;
-            int   playerCount = 0;
+            // Loop 1: O(n) — collect current player indices into _playerScratch, find maxDistSq.
+            float maxDistSq = 0f;
+            _playerScratchCount = 0;
             for (int i = 0; i < count; i++)
             {
                 if (!isPlayerOwned[i]) continue;
                 float dsq = math.distancesq(positions[i], centroid);
                 if (dsq > maxDistSq) maxDistSq = dsq;
-                playerCount++;
+                _playerScratch[_playerScratchCount++] = i;
             }
-            if (playerCount == 0) return;
+            if (_playerScratchCount == 0) return;
             if (maxDistSq <= 0f) return; // 单粒子或所有粒子重叠——无分布可削减
 
             float edgeThreshSq = (1f - _edgeFraction) * maxDistSq;
             float maxVel       = _simulation.MaxVelocity;
             float dt           = Time.deltaTime;
 
-            for (int i = 0; i < count; i++)
+            // Loop 2: O(p) — iterate only player-owned indices collected above.
+            for (int s = 0; s < _playerScratchCount; s++)
             {
-                if (!isPlayerOwned[i]) continue;
+                int i = _playerScratch[s];
                 if (math.distancesq(positions[i], centroid) < edgeThreshSq) continue;
 
                 float speedRatio = math.saturate(math.length(velocities[i]) / maxVel);

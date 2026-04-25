@@ -64,10 +64,6 @@ namespace ParticleLife.Rendering
             _colors           = new Vector4[BatchSize];
             _outlineMatrices  = new Matrix4x4[BatchSize];
             _outlineColors    = new Vector4[BatchSize];
-            _colorCache       = new Vector4[256];
-            _playerColorCache = new Vector4[256];
-            _scaleCache       = new float[256];
-
             if (_particleMesh == null)
                 _particleMesh = CreateCircleMesh();
         }
@@ -79,17 +75,18 @@ namespace ParticleLife.Rendering
         /// <param name="types">Particle type array.</param>
         /// <param name="isPlayerOwned">Player ownership flags.</param>
         /// <param name="particleCount">Active particle count.</param>
-        public void Render(
-            NativeArray<float2> positions,
-            NativeArray<byte>   types,
-            NativeArray<bool>   isPlayerOwned,
-            int                 particleCount,
-            NativeArray<float>  typeRadii)
+        /// <summary>
+        /// Builds the per-type color and scale lookup tables. Call once after type data is
+        /// finalized (SetNormalTypeCount + typeRadii configured). Tables are static for the
+        /// lifetime of the session so this replaces the previous per-frame rebuild in Render().
+        /// </summary>
+        public void BuildColorCache(NativeArray<float> typeRadii)
         {
-            if (_particleMesh == null || _particleMaterial == null) return;
+            // Arrays may not be allocated yet if ParticleRenderer.Awake() hasn't run.
+            _colorCache       ??= new Vector4[256];
+            _playerColorCache ??= new Vector4[256];
+            _scaleCache       ??= new float[256];
 
-            // Rebuild per-type lookup tables once per call (O(256)) to avoid per-particle
-            // function calls with branches in the hot render loops below.
             for (int t = 0; t < 256; t++)
             {
                 Color c = TypeColor((byte)t);
@@ -101,6 +98,16 @@ namespace ParticleLife.Rendering
                 _scaleCache[t] = typeRadii.IsCreated && t < typeRadii.Length
                     ? typeRadii[t] * 2f : _particleScale;
             }
+        }
+
+        public void Render(
+            NativeArray<float2> positions,
+            NativeArray<byte>   types,
+            NativeArray<bool>   isPlayerOwned,
+            int                 particleCount,
+            NativeArray<float>  typeRadii)
+        {
+            if (_particleMesh == null || _particleMaterial == null) return;
 
             // ── 轮廓 Pass（仅玩家粒子，z=0.01f，先绘制在下层）────────────────
             Vector4 outlineVec        = new(_outlineColor.r, _outlineColor.g, _outlineColor.b, _outlineColor.a);
@@ -110,10 +117,9 @@ namespace ParticleLife.Rendering
             {
                 if (!isPlayerOwned[i]) continue;
 
-                _outlineMatrices[outlineBatchCount] = Matrix4x4.TRS(
-                    new Vector3(positions[i].x, positions[i].y, 0.01f),
-                    Quaternion.identity,
-                    Vector3.one * (_scaleCache[types[i]] * _outlineRelativeScale));
+                _outlineMatrices[outlineBatchCount] = ScaleTranslate(
+                    positions[i].x, positions[i].y, 0.01f,
+                    _scaleCache[types[i]] * _outlineRelativeScale);
                 _outlineColors[outlineBatchCount] = outlineVec;
                 outlineBatchCount++;
 
@@ -145,10 +151,7 @@ namespace ParticleLife.Rendering
                     int  i    = batchStart + b;
                     byte type = types[i];
 
-                    _matrices[b] = Matrix4x4.TRS(
-                        new Vector3(positions[i].x, positions[i].y, 0f),
-                        Quaternion.identity,
-                        Vector3.one * _scaleCache[type]);
+                    _matrices[b] = ScaleTranslate(positions[i].x, positions[i].y, 0f, _scaleCache[type]);
 
                     _colors[b] = isPlayerOwned[i] ? _playerColorCache[type] : _colorCache[type];
                 }
@@ -174,6 +177,17 @@ namespace ParticleLife.Rendering
         /// <summary>Returns the display color for a normal particle type index (0-based, excludes special types).</summary>
         public Color GetTypeColor(int typeIndex) =>
             _typeColors.Length > 0 ? _typeColors[typeIndex % _typeColors.Length] : Color.white;
+
+        // Builds a pure scale+translate Matrix4x4 without going through Quaternion→rotation-matrix
+        // conversion inside Matrix4x4.TRS. All particles have identity rotation so this is correct.
+        // 7 field assignments vs ~20 multiplications in the TRS path.
+        private static Matrix4x4 ScaleTranslate(float x, float y, float z, float scale)
+        {
+            Matrix4x4 m = default;
+            m.m00 = scale; m.m11 = scale; m.m22 = scale; m.m33 = 1f;
+            m.m03 = x;     m.m13 = y;     m.m23 = z;
+            return m;
+        }
 
         // 返回 type 对应的渲染直径（= 半径 × 2）；若 typeRadii 未配置则回退到 _particleScale
         private float ParticleScale(byte type, NativeArray<float> typeRadii) =>

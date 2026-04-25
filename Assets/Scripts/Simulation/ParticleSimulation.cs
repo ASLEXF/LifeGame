@@ -307,6 +307,10 @@ namespace ParticleLife.Simulation
                 _gravityMatrix.Set(a, b, entry);
             }
 
+            // Build renderer color/scale lookup tables once — data is static for the session.
+            // Must be called after SetNormalTypeCount and _typeRadiiNative are both finalized.
+            _renderer.BuildColorCache(_typeRadiiNative);
+
             SpawnInitialParticles();
         }
 
@@ -430,25 +434,32 @@ namespace ParticleLife.Simulation
                 _jobPending = false;
             }
 
-            if (_particleCount > 0)
+            if (_particleCount <= 0) return;
+
+            NativeArray<float2> renderPositions = _positionsRead;
+            if (_visualSmoothing == VisualSmoothingMode.VelocityExtrapolation)
+            {
+                // Single pass: extrapolate render positions and accumulate player-owned average velocity.
+                // Eliminates the separate O(n) scan from UpdatePlayerOwnedAverageVelocity.
+                float  rem      = Mathf.Min(Time.time - Time.fixedTime, Time.fixedDeltaTime * 2f);
+                float2 velSum   = float2.zero;
+                int    velCount = 0;
+                int    n        = _particleCount;
+                for (int i = 0; i < n; i++)
+                {
+                    float2 vel          = _velocities[i];
+                    _positionsRender[i] = _positionsRead[i] + vel * rem;
+                    if (_isPlayerOwned[i]) { velSum += vel; velCount++; }
+                }
+                _playerOwnedAverageVelocity = velCount > 0 ? velSum / velCount : float2.zero;
+                renderPositions = _positionsRender;
+            }
+            else
             {
                 UpdatePlayerOwnedAverageVelocity();
-
-                NativeArray<float2> renderPositions = _positionsRead;
-                if (_visualSmoothing == VisualSmoothingMode.VelocityExtrapolation)
-                {
-                    // Advance display along current velocity for wall-clock time since last FixedUpdate.
-                    // (Prev lerp(prev,curr,alpha) used alpha that peaks *after* integrate — showed wrong state near 0.)
-                    float rem = Time.time - Time.fixedTime;
-                    rem = Mathf.Min(rem, Time.fixedDeltaTime * 2f);
-                    int n = _particleCount;
-                    for (int i = 0; i < n; i++)
-                        _positionsRender[i] = _positionsRead[i] + _velocities[i] * rem;
-                    renderPositions = _positionsRender;
-                }
-
-                _renderer.Render(renderPositions, _types, _isPlayerOwned, _particleCount, _typeRadiiNative);
             }
+
+            _renderer.Render(renderPositions, _types, _isPlayerOwned, _particleCount, _typeRadiiNative);
         }
 
         private void OnDestroy()

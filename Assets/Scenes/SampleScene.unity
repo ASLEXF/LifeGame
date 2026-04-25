@@ -289,8 +289,8 @@ MonoBehaviour:
   - 0.4
   - 0.4
   - 0.4
+  - 1
   - 0.6
-  - 0.4
   _spawnInterval: 0.5
   _densityRadius: 5
   _densityCap: 10

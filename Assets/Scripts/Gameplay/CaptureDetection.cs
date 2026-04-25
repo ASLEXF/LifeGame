@@ -59,6 +59,10 @@ namespace ParticleLife.Gameplay
 
         private void LateUpdate()
         {
+            // [DISABLED] Failure path and HUD slider both disabled — skip O(n) scan.
+            // Re-enable by removing this return when CaptureDetection is wired back up.
+            return;
+
             if (_gameState.CurrentState != GameState.Running) return;
 
             int count = _simulation.ParticleCount;
