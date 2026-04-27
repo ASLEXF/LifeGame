@@ -248,6 +248,23 @@ MonoBehaviour:
   _sheddingRate: 0.6
   _edgeFraction: 0.2
   _zeroPatienceSec: 30
+  _useIncrementalPlayerState: 1
+  _useBudgetedAdopt: 1
+  _adoptFrontierBudgetPerFrame: 256
+  _useDirtySplitCheck: 1
+  _splitCheckEveryNFrames: 6
+  _splitDirtyThreshold: 8
+  _clusterMarkEveryNFrames: 2
+  _minFramesBetweenSplitChecks: 3
+  _avoidSplitAndClusterSameFrame: 1
+  _adoptBudgetOnHeavyFrame: 32
+  _enablePlayerPerfLogging: 0
+  _playerPerfLogIntervalSec: 1
+  _enableFrameTimeGuard: 1
+  _frameTimeGuardMs: 15.5
+  _skipSplitWhenOverBudget: 1
+  _skipClusterMarkWhenOverBudget: 1
+  _adoptBudgetWhenOverBudget: 64
   _input: {fileID: 83642379}
   _gameState: {fileID: 2072673226}
 --- !u!114 &83642377
@@ -263,7 +280,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.Simulation.ParticleSimulation
   _maxParticleCount: 6000
-  _initialCount: 3000
+  _initialCount: 2000
   _worldHeight: 100
   _typeCount: 8
   _damping: 0.85
@@ -301,7 +318,22 @@ MonoBehaviour:
   _spawnDirWindowSec: 2
   _initialSpawnRadiusMin: 0
   _fixedPhysicsHz: 60
+  _adaptivePhysicsHzEnabled: 1
+  _adaptivePhysicsParticleThreshold: 1400
+  _adaptivePhysicsLowHz: 60
   _visualSmoothing: 1
+  _simulationBackend: 1
+  _particleSimulationCompute: {fileID: 7200000, guid: 3f0c9dd0582fc1f4d9e6cfb65f3393b7, type: 3}
+  _gpuExternalForceReadbackIntervalFrames: 4
+  _gpuGridRebuildIntervalFrames: 2
+  _gpuExternalForceReadbackPhase: 1
+  _gpuGridRebuildPhase: 0
+  _gpuBruteForceThreshold: 768
+  _gpuTemporalSlicingEnabled: 1
+  _gpuSliceCount: 4
+  _gpuSlicePlayerParticlesOnly: 1
+  _enablePerfLogging: 0
+  _perfLogIntervalSeconds: 1
   _spawnGroupSizeMin: 10
   _spawnGroupSizeMax: 50
   _clusterSpawnJitter: 0.5
@@ -323,10 +355,13 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ParticleLife.Rendering.ParticleRenderer
   _particleMesh: {fileID: 0}
   _particleMaterial: {fileID: 2100000, guid: e689c5ee97ea14c469f389834bc1ffc4, type: 2}
+  _particleIndirectMaterial: {fileID: 2100000, guid: 1629c5b7e4df67742851a016322fc552, type: 2}
   _particleScale: 0.4
   _playerBrightnessMult: 1.8
+  _useIndirectRendering: 1
   _outlineRelativeScale: 1.6
   _outlineColor: {r: 1, g: 0, b: 0, a: 1}
+  _outlineDisableThreshold: 1400
   _typeColors:
   - {r: 0.2, g: 0.6, b: 1, a: 1}
   - {r: 1, g: 0.4, b: 0.2, a: 1}

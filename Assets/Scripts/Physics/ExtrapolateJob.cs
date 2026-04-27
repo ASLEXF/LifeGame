@@ -49,4 +49,31 @@ namespace ParticleLife.Physics
             Result.Value = c > 0 ? sum / c : float2.zero;
         }
     }
+
+    /// <summary>
+    /// Computes mean velocity using a compact player index list (O(P) where P is player count).
+    /// Falls back to zero when the scratch list is empty.
+    /// </summary>
+    [BurstCompile]
+    public struct ComputePlayerAverageVelocityFromScratchJob : IJob
+    {
+        [ReadOnly] public NativeArray<float2> Velocities;
+        [ReadOnly] public NativeArray<int>    PlayerScratch;
+        [ReadOnly] public int                 PlayerScratchCount;
+        public NativeReference<float2>        Result;
+
+        public void Execute()
+        {
+            float2 sum = float2.zero;
+            int n = 0;
+            for (int s = 0; s < PlayerScratchCount; s++)
+            {
+                int i = PlayerScratch[s];
+                if ((uint)i >= (uint)Velocities.Length) continue;
+                sum += Velocities[i];
+                n++;
+            }
+            Result.Value = n > 0 ? sum / n : float2.zero;
+        }
+    }
 }

@@ -15,12 +15,15 @@ namespace ParticleLife.Rendering
         [Header("渲染设置")]
         [SerializeField] private Mesh     _particleMesh;
         [SerializeField] private Material _particleMaterial;
+        [SerializeField] private Material _particleIndirectMaterial;
         [SerializeField] private float    _particleScale = 0.4f;
         [SerializeField] private float    _playerBrightnessMult = 1.8f;
+        [SerializeField] private bool _useIndirectRendering = true;
 
         [Header("玩家粒子外边缘")]
         [SerializeField] private float _outlineRelativeScale = 1.6f;
         [SerializeField] private Color _outlineColor         = Color.white;
+        [SerializeField][Min(0)] private int _outlineDisableThreshold = 1400;
 
         [Header("粒子颜色（按类型）")]
         [SerializeField] private Color[] _typeColors = new Color[]
@@ -50,6 +53,13 @@ namespace ParticleLife.Rendering
         private Vector4[]            _colors;
         private Matrix4x4[]          _outlineMatrices;
         private Vector4[]            _outlineColors;
+        private Vector4[]            _indirectPositionScale;
+        private Vector4[]            _indirectColors;
+        private ComputeBuffer        _indirectPositionScaleBuffer;
+        private ComputeBuffer        _indirectColorBuffer;
+        private ComputeBuffer        _indirectArgsBuffer;
+        private readonly uint[]      _indirectArgs = new uint[5];
+        private readonly Bounds      _indirectBounds = new Bounds(Vector3.zero, Vector3.one * 100000f);
 
         // Per-type lookup tables (indexed by type byte 0–255).
         // Rebuilt once per Render() call — O(256) vs O(particleCount) per-particle calls.
@@ -64,6 +74,8 @@ namespace ParticleLife.Rendering
             _colors           = new Vector4[BatchSize];
             _outlineMatrices  = new Matrix4x4[BatchSize];
             _outlineColors    = new Vector4[BatchSize];
+            _indirectPositionScale = new Vector4[0];
+            _indirectColors = new Vector4[0];
             if (_particleMesh == null)
                 _particleMesh = CreateCircleMesh();
         }
@@ -111,42 +123,71 @@ namespace ParticleLife.Rendering
         {
             if (_particleMesh == null || _particleMaterial == null) return;
 
-            // ── 轮廓 Pass O(p)（仅玩家粒子，z=0.01f，先绘制在下层）─────────
-            // Uses pre-built player index scratch from PlayerControl — one frame stale but
-            // imperceptible. isPlayerOwned[i] check filters any shed particles in the scratch.
-            Vector4 outlineVec        = new(_outlineColor.r, _outlineColor.g, _outlineColor.b, _outlineColor.a);
-            int     outlineBatchCount = 0;
-            int     scratchLen        = playerScratch.IsCreated ? playerScratchCount : 0;
-
-            for (int s = 0; s < scratchLen; s++)
+            bool drawOutline = _outlineDisableThreshold <= 0 || particleCount < _outlineDisableThreshold;
+            if (drawOutline)
             {
-                int i = playerScratch[s];
-                if ((uint)i >= (uint)particleCount || !isPlayerOwned[i]) continue;
+                // ── 轮廓 Pass O(p)（仅玩家粒子，z=0.01f，先绘制在下层）─────────
+                // Uses pre-built player index scratch from PlayerControl — one frame stale but
+                // imperceptible. isPlayerOwned[i] check filters any shed particles in the scratch.
+                Vector4 outlineVec        = new(_outlineColor.r, _outlineColor.g, _outlineColor.b, _outlineColor.a);
+                int     outlineBatchCount = 0;
+                int     scratchLen        = playerScratch.IsCreated ? playerScratchCount : 0;
 
-                _outlineMatrices[outlineBatchCount] = ScaleTranslate(
-                    positions[i].x, positions[i].y, 0.01f,
-                    _scaleCache[types[i]] * _outlineRelativeScale);
-                _outlineColors[outlineBatchCount] = outlineVec;
-                outlineBatchCount++;
+                for (int s = 0; s < scratchLen; s++)
+                {
+                    int i = playerScratch[s];
+                    if ((uint)i >= (uint)particleCount || !isPlayerOwned[i]) continue;
 
-                if (outlineBatchCount == BatchSize)
+                    _outlineMatrices[outlineBatchCount] = ScaleTranslate(
+                        positions[i].x, positions[i].y, 0.01f,
+                        _scaleCache[types[i]] * _outlineRelativeScale);
+                    _outlineColors[outlineBatchCount] = outlineVec;
+                    outlineBatchCount++;
+
+                    if (outlineBatchCount == BatchSize)
+                    {
+                        _propertyBlock.SetVectorArray("_BaseColor", _outlineColors);
+                        Graphics.DrawMeshInstanced(
+                            _particleMesh, 0, _particleMaterial,
+                            _outlineMatrices, outlineBatchCount, _propertyBlock);
+                        outlineBatchCount = 0;
+                    }
+                }
+                if (outlineBatchCount > 0)
                 {
                     _propertyBlock.SetVectorArray("_BaseColor", _outlineColors);
                     Graphics.DrawMeshInstanced(
                         _particleMesh, 0, _particleMaterial,
                         _outlineMatrices, outlineBatchCount, _propertyBlock);
-                    outlineBatchCount = 0;
                 }
-            }
-            if (outlineBatchCount > 0)
-            {
-                _propertyBlock.SetVectorArray("_BaseColor", _outlineColors);
-                Graphics.DrawMeshInstanced(
-                    _particleMesh, 0, _particleMaterial,
-                    _outlineMatrices, outlineBatchCount, _propertyBlock);
             }
 
             // ── 主粒子 Pass（z=0f，覆盖在轮廓上层）──────────────────────────
+            bool canUseIndirect = _useIndirectRendering && _particleIndirectMaterial != null && SystemInfo.supportsInstancing;
+            if (canUseIndirect)
+            {
+                EnsureIndirectCapacity(particleCount);
+                for (int i = 0; i < particleCount; i++)
+                {
+                    byte type = types[i];
+                    _indirectPositionScale[i] = new Vector4(positions[i].x, positions[i].y, _scaleCache[type], 0f);
+                    _indirectColors[i] = isPlayerOwned[i] ? _playerColorCache[type] : _colorCache[type];
+                }
+
+                _indirectPositionScaleBuffer.SetData(_indirectPositionScale, 0, 0, particleCount);
+                _indirectColorBuffer.SetData(_indirectColors, 0, 0, particleCount);
+                _particleIndirectMaterial.SetBuffer("_ParticlePositionScale", _indirectPositionScaleBuffer);
+                _particleIndirectMaterial.SetBuffer("_ParticleColor", _indirectColorBuffer);
+                _indirectArgs[0] = _particleMesh.GetIndexCount(0);
+                _indirectArgs[1] = (uint)particleCount;
+                _indirectArgs[2] = _particleMesh.GetIndexStart(0);
+                _indirectArgs[3] = _particleMesh.GetBaseVertex(0);
+                _indirectArgs[4] = 0;
+                _indirectArgsBuffer.SetData(_indirectArgs);
+                Graphics.DrawMeshInstancedIndirect(_particleMesh, 0, _particleIndirectMaterial, _indirectBounds, _indirectArgsBuffer);
+                return;
+            }
+
             int batchStart = 0;
             while (batchStart < particleCount)
             {
@@ -158,7 +199,6 @@ namespace ParticleLife.Rendering
                     byte type = types[i];
 
                     _matrices[b] = ScaleTranslate(positions[i].x, positions[i].y, 0f, _scaleCache[type]);
-
                     _colors[b] = isPlayerOwned[i] ? _playerColorCache[type] : _colorCache[type];
                 }
 
@@ -173,6 +213,29 @@ namespace ParticleLife.Rendering
 
                 batchStart += batchCount;
             }
+        }
+
+        private void EnsureIndirectCapacity(int particleCount)
+        {
+            if (_indirectPositionScale.Length < particleCount)
+                _indirectPositionScale = new Vector4[particleCount];
+            if (_indirectColors.Length < particleCount)
+                _indirectColors = new Vector4[particleCount];
+
+            if (_indirectPositionScaleBuffer == null || _indirectPositionScaleBuffer.count < particleCount)
+            {
+                _indirectPositionScaleBuffer?.Dispose();
+                _indirectPositionScaleBuffer = new ComputeBuffer(particleCount, sizeof(float) * 4);
+            }
+
+            if (_indirectColorBuffer == null || _indirectColorBuffer.count < particleCount)
+            {
+                _indirectColorBuffer?.Dispose();
+                _indirectColorBuffer = new ComputeBuffer(particleCount, sizeof(float) * 4);
+            }
+
+            if (_indirectArgsBuffer == null)
+                _indirectArgsBuffer = new ComputeBuffer(1, sizeof(uint) * 5, ComputeBufferType.IndirectArguments);
         }
 
         /// <summary>
@@ -248,6 +311,13 @@ namespace ParticleLife.Rendering
             mesh.triangles = triangles;
             mesh.RecalculateNormals();
             return mesh;
+        }
+
+        private void OnDestroy()
+        {
+            _indirectPositionScaleBuffer?.Dispose();
+            _indirectColorBuffer?.Dispose();
+            _indirectArgsBuffer?.Dispose();
         }
     }
 }

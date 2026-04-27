@@ -70,6 +70,13 @@ namespace ParticleLife.UI
 
         private void Start()
         {
+            if (_simulation == null)
+            {
+                Debug.LogError($"{nameof(MatrixConfigUI)} requires a {nameof(ParticleSimulation)} reference.", this);
+                enabled = false;
+                return;
+            }
+
             BuildUI();
             _panel.style.display = DisplayStyle.None;
 
@@ -83,6 +90,7 @@ namespace ParticleLife.UI
 
         private void OnLanguageChangedHandler(Localization.Language _)
         {
+            if (_simulation == null || _panel == null) return;
             BuildUI();
             _panel.style.display = _isOpen ? DisplayStyle.Flex : DisplayStyle.None;
         }
@@ -91,6 +99,7 @@ namespace ParticleLife.UI
         {
             Keyboard kb = Keyboard.current;
             if (kb == null) return;
+            if (_simulation == null) return;
 
             bool currentIsAssigned = _playerControl != null && _playerControl.IsAssigned;
             bool needRebuild = _matrixSizeSnapshot != _simulation.TotalTypeCount
@@ -114,6 +123,8 @@ namespace ParticleLife.UI
 
         private void BuildUI()
         {
+            if (_simulation == null || _document == null) return;
+
             var root = _document.rootVisualElement;
             root.Clear();
             root.AddToClassList("matrix-root");

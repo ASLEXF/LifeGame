@@ -1,0 +1,398 @@
+#pragma kernel ClearHashHeads
+#pragma kernel BuildHashGrid
+#pragma kernel Integrate
+#pragma kernel IntegrateBrute
+
+struct GravityEntryGpu
+{
+    float AttractionStrength;
+    float RepulsionStrength;
+    float DistanceThreshold;
+    float Padding;
+};
+
+RWStructuredBuffer<float2> _PositionsWrite;
+StructuredBuffer<float2> _PositionsRead;
+RWStructuredBuffer<float2> _Velocities;
+StructuredBuffer<uint> _Types;
+StructuredBuffer<uint> _IsPlayerOwned;
+StructuredBuffer<uint> _IsInPlayerCluster;
+RWStructuredBuffer<float> _IdleTime;
+RWStructuredBuffer<float> _RepelTimer;
+RWStructuredBuffer<float2> _ExternalForceOnPlayer;
+StructuredBuffer<GravityEntryGpu> _MatrixEntries;
+RWStructuredBuffer<int> _HashHeads;
+RWStructuredBuffer<int> _ParticleNext;
+RWStructuredBuffer<int2> _ParticleCells;
+
+int _ParticleCount;
+int _TypeCount;
+float _DeltaTime;
+float _Damping;
+float _MaxVelocity;
+float _WorldHalfX;
+float _WorldHalfY;
+float _IdleVelocityThreshold;
+float _BounceRestitution;
+float _BoundaryThreshold;
+float _BoundaryStrength;
+float2 _PlayerInputDir;
+float _PlayerInputForce;
+float _PlayerMaxSpeed;
+int _PlayerParticleCount;
+int _PlayerResistanceFullAt;
+float _PlayerMaxExternalReduction;
+float _ForceScale;
+int _UnboundedWorld;
+int _ShieldActive;
+float _ShieldPlayerRepulsionScale;
+float2 _PlayerCentroid;
+float _ClusterCohesionStrength;
+float _CellSize;
+int _ActiveHashBucketCount;
+int _ActiveHashMask;
+int _SliceCount;
+int _SliceIndex;
+int _SlicePlayerParticlesOnly;
+
+uint HashCell(int2 cell)
+{
+    uint x = asuint(cell.x) * 73856093u;
+    uint y = asuint(cell.y) * 19349663u;
+    return (x ^ y) & (uint)_ActiveHashMask;
+}
+
+[numthreads(64, 1, 1)]
+void ClearHashHeads(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= (uint)_ActiveHashBucketCount) return;
+    _HashHeads[i] = -1;
+}
+
+[numthreads(64, 1, 1)]
+void BuildHashGrid(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= (uint)_ParticleCount) return;
+
+    float2 pos = _PositionsRead[i];
+    float invCell = rcp(max(_CellSize, 0.001));
+    int2 cell = int2((int)floor(pos.x * invCell), (int)floor(pos.y * invCell));
+    _ParticleCells[i] = cell;
+
+    uint bucket = HashCell(cell);
+    int previousHead;
+    InterlockedExchange(_HashHeads[bucket], (int)i, previousHead);
+    _ParticleNext[i] = previousHead;
+}
+
+[numthreads(64, 1, 1)]
+void Integrate(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= (uint)_ParticleCount) return;
+
+    float2 pos = _PositionsRead[i];
+    float2 vel = _Velocities[i];
+    uint typeA = _Types[i];
+    float2 force = 0;
+    bool isPlayer = _IsPlayerOwned[i] != 0;
+    bool inCluster = _IsInPlayerCluster[i] != 0;
+    bool sliceCandidate = (_SlicePlayerParticlesOnly != 0) ? (isPlayer || inCluster) : (!isPlayer && !inCluster);
+    bool fullUpdate = !sliceCandidate || (_SliceCount <= 1) || ((i % (uint)_SliceCount) == (uint)_SliceIndex);
+    float2 extForce = 0;
+
+    if (fullUpdate)
+    {
+        int2 baseCell = _ParticleCells[i];
+        [loop]
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            [loop]
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                int2 neighborCell = baseCell + int2(dx, dy);
+                uint bucket = HashCell(neighborCell);
+                int j = _HashHeads[bucket];
+                while (j >= 0)
+                {
+                    if ((uint)j != i && all(_ParticleCells[j] == neighborCell))
+                    {
+                        float2 diff = _PositionsRead[j] - pos;
+                        float distSq = dot(diff, diff);
+                        if (distSq >= 1e-6)
+                        {
+                            float dist = sqrt(distSq);
+
+                            GravityEntryGpu entry = _MatrixEntries[typeA * _TypeCount + _Types[j]];
+                            float threshold = max(entry.DistanceThreshold, 0.001);
+                            float2 dir = diff / dist;
+                            float2 f = 0;
+
+                            if (dist >= threshold)
+                            {
+                                float maxDist = threshold * 3.0;
+                                if (dist < maxDist)
+                                {
+                                    float t = (dist - threshold) / (maxDist - threshold);
+                                    f = dir * (entry.AttractionStrength * (1.0 - t));
+                                }
+                            }
+                            else
+                            {
+                                float t = dist / threshold;
+                                float repulsion = entry.RepulsionStrength;
+                                if (_ShieldActive != 0 && isPlayer && _IsPlayerOwned[j] != 0)
+                                    repulsion *= _ShieldPlayerRepulsionScale;
+                                f = -dir * (repulsion * (1.0 - t) / (t + 0.05));
+                            }
+
+                            force += f;
+                            if (isPlayer && _IsPlayerOwned[j] == 0)
+                                extForce += f;
+                        }
+                    }
+                    j = _ParticleNext[j];
+                }
+            }
+        }
+    }
+
+    force *= _ForceScale;
+    extForce *= _ForceScale;
+
+    bool isRepelled = _RepelTimer[i] > 0.0;
+    if (isRepelled)
+    {
+        force = 0;
+        extForce = 0;
+        _RepelTimer[i] = max(0.0, _RepelTimer[i] - _DeltaTime);
+    }
+
+    if (_ShieldActive != 0 && isPlayer)
+    {
+        force -= extForce;
+        extForce = 0;
+    }
+
+    _ExternalForceOnPlayer[i] = isPlayer ? extForce : 0;
+
+    if (inCluster && !isRepelled && dot(_PlayerInputDir, _PlayerInputDir) > 1e-4)
+        force += _PlayerInputDir * _PlayerInputForce;
+
+    if (isPlayer && _PlayerResistanceFullAt > 0 && dot(_PlayerInputDir, _PlayerInputDir) > 1e-4)
+    {
+        float resistance = saturate(_PlayerParticleCount / (float)_PlayerResistanceFullAt);
+        float extScale = 1.0 - resistance * _PlayerMaxExternalReduction;
+        force -= extForce;
+        force += extForce * extScale;
+    }
+
+    if (isPlayer && _ClusterCohesionStrength > 0.0)
+        force += (_PlayerCentroid - pos) * _ClusterCohesionStrength;
+
+    if (_UnboundedWorld == 0 && _BoundaryThreshold > 0.0)
+    {
+        float dLeft = pos.x + _WorldHalfX;
+        float dRight = _WorldHalfX - pos.x;
+        float dBottom = pos.y + _WorldHalfY;
+        float dTop = _WorldHalfY - pos.y;
+
+        if (dLeft > 0.0 && dLeft < _BoundaryThreshold)
+        {
+            float t = dLeft / _BoundaryThreshold;
+            force.x += _BoundaryStrength * (1.0 - t) / (t + 0.05);
+        }
+        if (dRight > 0.0 && dRight < _BoundaryThreshold)
+        {
+            float t = dRight / _BoundaryThreshold;
+            force.x -= _BoundaryStrength * (1.0 - t) / (t + 0.05);
+        }
+        if (dBottom > 0.0 && dBottom < _BoundaryThreshold)
+        {
+            float t = dBottom / _BoundaryThreshold;
+            force.y += _BoundaryStrength * (1.0 - t) / (t + 0.05);
+        }
+        if (dTop > 0.0 && dTop < _BoundaryThreshold)
+        {
+            float t = dTop / _BoundaryThreshold;
+            force.y -= _BoundaryStrength * (1.0 - t) / (t + 0.05);
+        }
+    }
+
+    vel += force * _DeltaTime;
+    vel *= isRepelled ? 1.0 : _Damping;
+
+    float speed = length(vel);
+    if (isPlayer)
+    {
+        if (speed > _PlayerMaxSpeed) vel = vel / speed * _PlayerMaxSpeed;
+    }
+    else if (!isRepelled)
+    {
+        if (speed > _MaxVelocity) vel = vel / speed * _MaxVelocity;
+    }
+
+    float2 newPos = pos + vel * _DeltaTime;
+    if (_UnboundedWorld == 0)
+    {
+        if (newPos.x < -_WorldHalfX) { newPos.x = -_WorldHalfX; vel.x = abs(vel.x) * _BounceRestitution; }
+        if (newPos.x > _WorldHalfX) { newPos.x = _WorldHalfX; vel.x = -abs(vel.x) * _BounceRestitution; }
+        if (newPos.y < -_WorldHalfY) { newPos.y = -_WorldHalfY; vel.y = abs(vel.y) * _BounceRestitution; }
+        if (newPos.y > _WorldHalfY) { newPos.y = _WorldHalfY; vel.y = -abs(vel.y) * _BounceRestitution; }
+    }
+
+    if (!isPlayer)
+        _IdleTime[i] = speed < _IdleVelocityThreshold ? (_IdleTime[i] + _DeltaTime) : 0.0;
+
+    _Velocities[i] = vel;
+    _PositionsWrite[i] = newPos;
+}
+
+[numthreads(64, 1, 1)]
+void IntegrateBrute(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= (uint)_ParticleCount) return;
+
+    float2 pos = _PositionsRead[i];
+    float2 vel = _Velocities[i];
+    uint typeA = _Types[i];
+    float2 force = 0;
+    bool isPlayer = _IsPlayerOwned[i] != 0;
+    bool inCluster = _IsInPlayerCluster[i] != 0;
+    bool sliceCandidate = (_SlicePlayerParticlesOnly != 0) ? (isPlayer || inCluster) : (!isPlayer && !inCluster);
+    bool fullUpdate = !sliceCandidate || (_SliceCount <= 1) || ((i % (uint)_SliceCount) == (uint)_SliceIndex);
+    float2 extForce = 0;
+
+    if (fullUpdate)
+    {
+        [loop]
+        for (uint j = 0; j < (uint)_ParticleCount; j++)
+        {
+            if (j == i) continue;
+            float2 diff = _PositionsRead[j] - pos;
+            float distSq = dot(diff, diff);
+            if (distSq < 1e-6) continue;
+            float dist = sqrt(distSq);
+
+            GravityEntryGpu entry = _MatrixEntries[typeA * _TypeCount + _Types[j]];
+            float threshold = max(entry.DistanceThreshold, 0.001);
+            float2 dir = diff / dist;
+            float2 f = 0;
+
+            if (dist >= threshold)
+            {
+                float maxDist = threshold * 3.0;
+                if (dist < maxDist)
+                {
+                    float t = (dist - threshold) / (maxDist - threshold);
+                    f = dir * (entry.AttractionStrength * (1.0 - t));
+                }
+            }
+            else
+            {
+                float t = dist / threshold;
+                float repulsion = entry.RepulsionStrength;
+                if (_ShieldActive != 0 && isPlayer && _IsPlayerOwned[j] != 0)
+                    repulsion *= _ShieldPlayerRepulsionScale;
+                f = -dir * (repulsion * (1.0 - t) / (t + 0.05));
+            }
+
+            force += f;
+            if (isPlayer && _IsPlayerOwned[j] == 0)
+                extForce += f;
+        }
+    }
+
+    force *= _ForceScale;
+    extForce *= _ForceScale;
+
+    bool isRepelled = _RepelTimer[i] > 0.0;
+    if (isRepelled)
+    {
+        force = 0;
+        extForce = 0;
+        _RepelTimer[i] = max(0.0, _RepelTimer[i] - _DeltaTime);
+    }
+
+    if (_ShieldActive != 0 && isPlayer)
+    {
+        force -= extForce;
+        extForce = 0;
+    }
+
+    _ExternalForceOnPlayer[i] = isPlayer ? extForce : 0;
+
+    if (inCluster && !isRepelled && dot(_PlayerInputDir, _PlayerInputDir) > 1e-4)
+        force += _PlayerInputDir * _PlayerInputForce;
+
+    if (isPlayer && _PlayerResistanceFullAt > 0 && dot(_PlayerInputDir, _PlayerInputDir) > 1e-4)
+    {
+        float resistance = saturate(_PlayerParticleCount / (float)_PlayerResistanceFullAt);
+        float extScale = 1.0 - resistance * _PlayerMaxExternalReduction;
+        force -= extForce;
+        force += extForce * extScale;
+    }
+
+    if (isPlayer && _ClusterCohesionStrength > 0.0)
+        force += (_PlayerCentroid - pos) * _ClusterCohesionStrength;
+
+    if (_UnboundedWorld == 0 && _BoundaryThreshold > 0.0)
+    {
+        float dLeft = pos.x + _WorldHalfX;
+        float dRight = _WorldHalfX - pos.x;
+        float dBottom = pos.y + _WorldHalfY;
+        float dTop = _WorldHalfY - pos.y;
+
+        if (dLeft > 0.0 && dLeft < _BoundaryThreshold)
+        {
+            float t = dLeft / _BoundaryThreshold;
+            force.x += _BoundaryStrength * (1.0 - t) / (t + 0.05);
+        }
+        if (dRight > 0.0 && dRight < _BoundaryThreshold)
+        {
+            float t = dRight / _BoundaryThreshold;
+            force.x -= _BoundaryStrength * (1.0 - t) / (t + 0.05);
+        }
+        if (dBottom > 0.0 && dBottom < _BoundaryThreshold)
+        {
+            float t = dBottom / _BoundaryThreshold;
+            force.y += _BoundaryStrength * (1.0 - t) / (t + 0.05);
+        }
+        if (dTop > 0.0 && dTop < _BoundaryThreshold)
+        {
+            float t = dTop / _BoundaryThreshold;
+            force.y -= _BoundaryStrength * (1.0 - t) / (t + 0.05);
+        }
+    }
+
+    vel += force * _DeltaTime;
+    vel *= isRepelled ? 1.0 : _Damping;
+
+    float speed = length(vel);
+    if (isPlayer)
+    {
+        if (speed > _PlayerMaxSpeed) vel = vel / speed * _PlayerMaxSpeed;
+    }
+    else if (!isRepelled)
+    {
+        if (speed > _MaxVelocity) vel = vel / speed * _MaxVelocity;
+    }
+
+    float2 newPos = pos + vel * _DeltaTime;
+    if (_UnboundedWorld == 0)
+    {
+        if (newPos.x < -_WorldHalfX) { newPos.x = -_WorldHalfX; vel.x = abs(vel.x) * _BounceRestitution; }
+        if (newPos.x > _WorldHalfX) { newPos.x = _WorldHalfX; vel.x = -abs(vel.x) * _BounceRestitution; }
+        if (newPos.y < -_WorldHalfY) { newPos.y = -_WorldHalfY; vel.y = abs(vel.y) * _BounceRestitution; }
+        if (newPos.y > _WorldHalfY) { newPos.y = _WorldHalfY; vel.y = -abs(vel.y) * _BounceRestitution; }
+    }
+
+    if (!isPlayer)
+        _IdleTime[i] = speed < _IdleVelocityThreshold ? (_IdleTime[i] + _DeltaTime) : 0.0;
+
+    _Velocities[i] = vel;
+    _PositionsWrite[i] = newPos;
+}

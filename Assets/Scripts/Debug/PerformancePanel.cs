@@ -1,4 +1,5 @@
 using UnityEngine;
+using ParticleLife.Simulation;
 
 public class PerformancePanel : MonoBehaviour
 {
@@ -19,6 +20,7 @@ public class PerformancePanel : MonoBehaviour
     private GUIStyle style;
     private Rect rect;
     private float memoryMB;
+    private ParticleSimulation simulation;
 
     void Start()
     {
@@ -30,6 +32,7 @@ public class PerformancePanel : MonoBehaviour
 
         low = 999f;
         high = 0f;
+        simulation = FindObjectOfType<ParticleSimulation>();
     }
 
     void Update()
@@ -74,6 +77,14 @@ public class PerformancePanel : MonoBehaviour
         string text = $"FPS: {fps:F1} Low: {lowest:F1} High: {highest:F1}";
         if (showMemory)
             text += $"\nMemory: {memoryMB:F1} MB";
+        if (simulation != null)
+        {
+            text += $"\nSimFPS: {simulation.PerfLastFps:F1}";
+            text += $"\nFixed/Late: {simulation.PerfLastFixedMs:F2}/{simulation.PerfLastLateMs:F2} ms";
+            text += $"\nRender/Grid: {simulation.PerfLastRenderMs:F2}/{simulation.PerfLastGridMs:F2} ms";
+            text += $"\nGPU U/S/R: {simulation.PerfLastGpuUploadMs:F2}/{simulation.PerfLastGpuStepMs:F2}/{simulation.PerfLastGpuReadbackMs:F2} ms";
+            text += $"\nLateWaitPhys: {simulation.PerfLastPhysicsWaitMs:F2} ms";
+        }
 
         GUI.Label(rect, text, style);
     }

@@ -86,7 +86,9 @@ namespace ParticleLife.Rendering
                     targetPos.x = centroid.x * strength;
                     targetPos.y = centroid.y * strength;
 
-                    if (_unboundedMode && _extrapolateWithPlayerVelocity && _simulation != null
+                    if (_unboundedMode 
+                        && _extrapolateWithPlayerVelocity 
+                        && _simulation != null
                         && _simulation.UsesVelocityVisualSmoothing)
                     {
                         float rem = Time.time - Time.fixedTime;

@@ -10,6 +10,12 @@ using UnityEngine;
 
 namespace ParticleLife.Simulation
 {
+    public enum SimulationBackend
+    {
+        CPU = 0,
+        GPUCompute = 1,
+    }
+
     /// <summary>How to map discrete physics steps to the display refresh (reduces stair-step / smear).</summary>
     public enum VisualSmoothingMode
     {
@@ -118,9 +124,29 @@ namespace ParticleLife.Simulation
         [Header("时间与画面")]
         [Tooltip("固定物理频率（Hz）。≥1 时在 Awake 设置 Time.fixedDeltaTime = 1/Hz；120 与 144Hz 显示器更合拍。0 = 不改项目设置")]
         [SerializeField] private int _fixedPhysicsHz = 120;
+        [Tooltip("高负载自适应物理频率：粒子数达到阈值后自动降频到目标Hz，优先保证帧率稳定。")]
+        [SerializeField] private bool _adaptivePhysicsHzEnabled = true;
+        [SerializeField][Min(1)] private int _adaptivePhysicsParticleThreshold = 1400;
+        [SerializeField][Min(30)] private int _adaptivePhysicsLowHz = 60;
 
         [Tooltip("离散积分与显示器刷新对齐方式。速度外推可修正先前「插值 alpha」方向错误导致的后发糊")]
         [SerializeField] private VisualSmoothingMode _visualSmoothing = VisualSmoothingMode.VelocityExtrapolation;
+
+        [Header("后端")]
+        [SerializeField] private SimulationBackend _simulationBackend = SimulationBackend.GPUCompute;
+        [SerializeField] private ComputeShader _particleSimulationCompute;
+        [SerializeField][Min(1)] private int _gpuExternalForceReadbackIntervalFrames = 4;
+        [SerializeField][Min(1)] private int _gpuGridRebuildIntervalFrames = 2;
+        [SerializeField][Min(0)] private int _gpuExternalForceReadbackPhase = 1;
+        [SerializeField][Min(0)] private int _gpuGridRebuildPhase = 0;
+        [SerializeField][Min(64)] private int _gpuBruteForceThreshold = 768;
+        [SerializeField] private bool _gpuTemporalSlicingEnabled = true;
+        [SerializeField][Min(1)] private int _gpuSliceCount = 2;
+        [SerializeField] private bool _gpuSlicePlayerParticlesOnly = true;
+
+        [Header("性能采样")]
+        [SerializeField] private bool _enablePerfLogging = false;
+        [SerializeField][Min(0.2f)] private float _perfLogIntervalSeconds = 1f;
 
         [Header("无边界世界 — 集群预分组")]
         [Tooltip("每组共享种子位置的粒子数下限。1 = 每粒子独立（退化为原行为）")]
@@ -155,6 +181,7 @@ namespace ParticleLife.Simulation
         private NativeArray<float>  _repelTimer;
 
         private int _particleCount;
+        private int _activePhysicsHz;
 
         /// <summary>Average velocity of player-owned particles (after last physics complete). Used for camera extrapolation.</summary>
         private float2 _playerOwnedAverageVelocity;
@@ -169,6 +196,7 @@ namespace ParticleLife.Simulation
         // ── Supporting systems ────────────────────────────────────────────────
         private GravityMatrix                         _gravityMatrix;
         private NativeParallelMultiHashMap<int2, int> _grid;
+        private int _gridCapacity;
         private CellularAutomata                      _cellularAutomata;
 
         // ── Spawn direction smoothing ─────────────────────────────────────────
@@ -213,6 +241,32 @@ namespace ParticleLife.Simulation
 
         // ── Runtime matrix editing ────────────────────────────────────────────
         private bool _cellSizeDirty;
+        private GpuSimulationBackend _gpuBackend;
+        private bool _gpuStateDirty;
+        private bool _gpuMatrixDirty;
+        private bool _gpuEntityMetaDirty;
+        private int _gpuSliceFrameCounter;
+        private int _gpuWorkFrameCounter;
+        private float _perfLogElapsed;
+        private float _perfFixedUpdateMsAccum;
+        private float _perfLateUpdateMsAccum;
+        private float _perfGpuUploadMsAccum;
+        private float _perfGpuStepMsAccum;
+        private float _perfGpuReadbackMsAccum;
+        private float _perfGridMsAccum;
+        private float _perfRenderMsAccum;
+        private int _perfSamples;
+        private float _perfPhysicsWaitMsAccum;
+        private int _perfPhysicsWaitCount;
+        private float _perfLastFixedMs;
+        private float _perfLastLateMs;
+        private float _perfLastGpuUploadMs;
+        private float _perfLastGpuStepMs;
+        private float _perfLastGpuReadbackMs;
+        private float _perfLastGridMs;
+        private float _perfLastRenderMs;
+        private float _perfLastPhysicsWaitMs;
+        private float _perfLastFps;
 
         /// <summary>
         /// Fired whenever SetGravityEntry() is called. Subscribe to persist changes.
@@ -233,7 +287,10 @@ namespace ParticleLife.Simulation
                 _gameInput = GetComponent<GameInput>();
 
             if (_fixedPhysicsHz >= 1)
+            {
                 Time.fixedDeltaTime = 1f / _fixedPhysicsHz;
+                _activePhysicsHz = _fixedPhysicsHz;
+            }
 
             // Allocate particle arrays at max capacity
             _positionsRead         = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);
@@ -266,8 +323,8 @@ namespace ParticleLife.Simulation
             _worldHalfX = _worldHalfY * ((float)Screen.width / Screen.height);
             _cellSize   = _gravityMatrix.MaxDistanceThreshold();
 
-            int gridCapacity = _maxParticleCount * 4;
-            _grid = new NativeParallelMultiHashMap<int2, int>(gridCapacity, Allocator.Persistent);
+            _gridCapacity = Mathf.Max(256, Mathf.NextPowerOfTwo(Mathf.Max(1, _initialCount) * 4));
+            _grid = new NativeParallelMultiHashMap<int2, int>(_gridCapacity, Allocator.Persistent);
 
             _cellularAutomata = new CellularAutomata(_spawnInterval, _densityRadius, _densityCap, _typeCount, _gravityMatrix.TypeCount);
             if (_spawnRipple != null)
@@ -320,28 +377,53 @@ namespace ParticleLife.Simulation
             _renderer.BuildColorCache(_typeRadiiNative);
 
             SpawnInitialParticles();
+
+            if (_simulationBackend == SimulationBackend.GPUCompute && _particleSimulationCompute != null)
+            {
+                _gpuBackend = new GpuSimulationBackend(_particleSimulationCompute, _maxParticleCount);
+                _gpuStateDirty = true;
+                _gpuMatrixDirty = true;
+                _gpuEntityMetaDirty = true;
+            }
+            else
+            {
+                _simulationBackend = SimulationBackend.CPU;
+            }
         }
 
         private void FixedUpdate()
         {
+            float fixedStartRt = _enablePerfLogging ? Time.realtimeSinceStartup : 0f;
+            UpdateAdaptivePhysicsHz();
             // Safety: complete any job that escaped LateUpdate (e.g. first frame)
             if (_jobPending)
             {
+                float waitStartRt = _enablePerfLogging ? Time.realtimeSinceStartup : 0f;
                 _pendingHandle.Complete();
                 _jobPending = false;
+                if (_enablePerfLogging)
+                {
+                    _perfPhysicsWaitMsAccum += (Time.realtimeSinceStartup - waitStartRt) * 1000f;
+                    _perfPhysicsWaitCount++;
+                }
             }
 
             // Execute deferred scatter (requested by PlayerSkill.Activate on the Update thread).
             if (_pendingScatter)
             {
-                ExecuteScatterPlayerParticles(_pendingScatterFraction, _pendingScatterCentroid, _pendingScatterImpulse);
+                if (ExecuteScatterPlayerParticles(_pendingScatterFraction, _pendingScatterCentroid, _pendingScatterImpulse))
+                {
+                    _gpuStateDirty = true;
+                    _gpuEntityMetaDirty = true;
+                }
                 _pendingScatter = false;
             }
 
             // Execute deferred repel (requested by PlayerSkill.Activate on the Update thread).
             if (_pendingRepel)
             {
-                ExecuteRepelNonPlayerParticles(_pendingRepelImpulse, _pendingRepelCentroid, _pendingRepelDuration, _pendingRepelRadius, _pendingRepelVelocityBlend);
+                if (ExecuteRepelNonPlayerParticles(_pendingRepelImpulse, _pendingRepelCentroid, _pendingRepelDuration, _pendingRepelRadius, _pendingRepelVelocityBlend))
+                    _gpuStateDirty = true;
                 _pendingRepel = false;
             }
 
@@ -355,6 +437,8 @@ namespace ParticleLife.Simulation
             // Cellular automata runs on main thread (reads positionsRead).
             // In unbounded mode candidates are sampled from the spawn annulus around the
             // player centroid; in bounded mode the original world-space random is used.
+            EnsureGridCapacity(_particleCount + 1);
+            int particleCountBeforeTick = _particleCount;
             _cellularAutomata.Tick(
                 _positionsRead,
                 _positionsWrite,
@@ -374,68 +458,183 @@ namespace ParticleLife.Simulation
                 _unboundedWorld ? _spawnDirectionBias : 0f,
                 _grid,
                 _cellSize);
+            if (_particleCount != particleCountBeforeTick)
+            {
+                _gpuStateDirty = true;
+                _gpuEntityMetaDirty = true;
+            }
 
             // Unbounded mode: teleport distant non-player particles back into the spawn ring.
             // Runs every CullEveryNFrames to amortise the O(N) scan cost.
             if (_unboundedWorld && ++_cullFrameCounter % CullEveryNFrames == 0)
-                CullAndRespawn(_playerCentroid,
-                               ComputeSmoothedMoveDir(CurrentPhysicsInputDir),
-                               _spawnDirectionBias);
+            {
+                if (CullAndRespawn(_playerCentroid,
+                                   ComputeSmoothedMoveDir(CurrentPhysicsInputDir),
+                                   _spawnDirectionBias))
+                {
+                    _gpuStateDirty = true;
+                    _gpuEntityMetaDirty = true;
+                }
+            }
 
             if (_particleCount <= 0) return;
 
-            // Build spatial grid from current read positions
-            JobHandle gridHandle = SpatialGrid.Schedule(
-                _positionsRead, _particleCount, _grid, _cellSize);
-
-            // Schedule physics
-            var physicsJob = new PhysicsJob
+            if (_simulationBackend == SimulationBackend.GPUCompute && _gpuBackend != null)
             {
-                PositionsRead              = _positionsRead,
-                PositionsWrite             = _positionsWrite,
-                Velocities                 = _velocities,
-                Types                      = _types,
-                IsPlayerOwned              = _isPlayerOwned,
-                IdleTime                   = _idleTime,
-                Grid                       = _grid,
-                MatrixEntries              = _gravityMatrix.Entries,
-                TypeCount                  = _gravityMatrix.TypeCount,
-                CellSize                   = _cellSize,
-                DeltaTime                  = Time.fixedDeltaTime,
-                Damping                    = _damping,
-                MaxVelocity                = _maxVelocity,
-                WorldHalfX                 = _worldHalfX,
-                WorldHalfY                 = _worldHalfY,
-                IdleVelocityThreshold      = IdleVelocityThreshold,
-                BounceRestitution          = _bounceRestitution,
-                BoundaryThreshold          = _boundaryThreshold,
-                BoundaryStrength           = _boundaryStrength,
-                PlayerInputDir             = CurrentPhysicsInputDir,
-                PlayerInputForce           = _playerInputForce,
-                PlayerMaxSpeed             = _playerMaxSpeed,
-                PlayerParticleCount        = _playerParticleCount,
-                PlayerResistanceFullAt     = _playerResistanceFullAt,
-                PlayerMaxExternalReduction = _playerMaxExternalReduction,
-                ExternalForceOnPlayer      = _externalForceOnPlayer,
-                IsInPlayerCluster          = _isInPlayerCluster,
-                RepelTimer                 = _repelTimer,
-                ForceScale                 = _forceScale,
-                UnboundedWorld             = _unboundedWorld,
-                ShieldActive               = _shieldActive,
-                ShieldPlayerRepulsionScale = _shieldPlayerRepulsionScale,
-                PlayerCentroid             = _playerCentroid,
-                ClusterCohesionStrength    = _clusterCohesionStrength,
-            };
+                int gpuWorkFrame = _gpuWorkFrameCounter++;
+                float uploadStartRt = _enablePerfLogging ? Time.realtimeSinceStartup : 0f;
+                if (_gpuStateDirty)
+                {
+                    _gpuBackend.UploadDynamicState(
+                        _positionsRead, _positionsWrite, _velocities, _idleTime, _repelTimer, _particleCount);
+                    _gpuStateDirty = false;
+                }
 
-            _pendingHandle = physicsJob.Schedule(_particleCount, 64, gridHandle);
-            _jobPending    = true;
+                if (_gpuEntityMetaDirty)
+                {
+                    _gpuBackend.UploadEntityMeta(
+                        _types, _isPlayerOwned, _isInPlayerCluster, _particleCount);
+                    _gpuEntityMetaDirty = false;
+                }
+
+                if (_gpuMatrixDirty)
+                {
+                    _gpuBackend.UploadMatrix(_gravityMatrix.Entries);
+                    _gpuMatrixDirty = false;
+                }
+                if (_enablePerfLogging)
+                    _perfGpuUploadMsAccum += (Time.realtimeSinceStartup - uploadStartRt) * 1000f;
+
+                float stepStartRt = _enablePerfLogging ? Time.realtimeSinceStartup : 0f;
+                _gpuBackend.Step(
+                    _particleCount,
+                    _gravityMatrix.TypeCount,
+                    Time.fixedDeltaTime,
+                    _damping,
+                    _maxVelocity,
+                    _worldHalfX,
+                    _worldHalfY,
+                    IdleVelocityThreshold,
+                    _bounceRestitution,
+                    _boundaryThreshold,
+                    _boundaryStrength,
+                    CurrentPhysicsInputDir,
+                    _playerInputForce,
+                    _playerMaxSpeed,
+                    _playerParticleCount,
+                    _playerResistanceFullAt,
+                    _playerMaxExternalReduction,
+                    _forceScale,
+                    _unboundedWorld,
+                    _shieldActive,
+                    _shieldPlayerRepulsionScale,
+                    _playerCentroid,
+                    _clusterCohesionStrength,
+                    _cellSize,
+                    _gpuBruteForceThreshold,
+                    _gpuTemporalSlicingEnabled ? Mathf.Max(1, _gpuSliceCount) : 1,
+                    _gpuTemporalSlicingEnabled ? (_gpuSliceFrameCounter++ % Mathf.Max(1, _gpuSliceCount)) : 0,
+                    _gpuSlicePlayerParticlesOnly);
+                if (_enablePerfLogging)
+                    _perfGpuStepMsAccum += (Time.realtimeSinceStartup - stepStartRt) * 1000f;
+
+                float readbackStartRt = _enablePerfLogging ? Time.realtimeSinceStartup : 0f;
+                _gpuBackend.DownloadCoreToCpu(_positionsWrite, _velocities, _idleTime, _repelTimer, _particleCount);
+                bool shouldRebuildGridThisFrame =
+                    (gpuWorkFrame % Mathf.Max(1, _gpuGridRebuildIntervalFrames)) ==
+                    (_gpuGridRebuildPhase % Mathf.Max(1, _gpuGridRebuildIntervalFrames));
+                bool shouldRequestReadbackThisFrame =
+                    (gpuWorkFrame % Mathf.Max(1, _gpuExternalForceReadbackIntervalFrames)) ==
+                    (_gpuExternalForceReadbackPhase % Mathf.Max(1, _gpuExternalForceReadbackIntervalFrames));
+
+                // Stagger expensive operations to reduce frame-time spikes.
+                if (shouldRequestReadbackThisFrame && !shouldRebuildGridThisFrame)
+                {
+                    _gpuBackend.RequestExternalForceReadback(_particleCount);
+                }
+                _gpuBackend.TryConsumeExternalForceReadback(_externalForceOnPlayer, _particleCount);
+                if (_enablePerfLogging)
+                    _perfGpuReadbackMsAccum += (Time.realtimeSinceStartup - readbackStartRt) * 1000f;
+            }
+            else
+            {
+                // Build spatial grid from current read positions
+                EnsureGridCapacity(_particleCount);
+                JobHandle gridHandle = SpatialGrid.Schedule(
+                    _positionsRead, _particleCount, _grid, _cellSize);
+
+                // Schedule physics
+                var physicsJob = new PhysicsJob
+                {
+                    PositionsRead              = _positionsRead,
+                    PositionsWrite             = _positionsWrite,
+                    Velocities                 = _velocities,
+                    Types                      = _types,
+                    IsPlayerOwned              = _isPlayerOwned,
+                    IdleTime                   = _idleTime,
+                    Grid                       = _grid,
+                    MatrixEntries              = _gravityMatrix.Entries,
+                    TypeCount                  = _gravityMatrix.TypeCount,
+                    CellSize                   = _cellSize,
+                    DeltaTime                  = Time.fixedDeltaTime,
+                    Damping                    = _damping,
+                    MaxVelocity                = _maxVelocity,
+                    WorldHalfX                 = _worldHalfX,
+                    WorldHalfY                 = _worldHalfY,
+                    IdleVelocityThreshold      = IdleVelocityThreshold,
+                    BounceRestitution          = _bounceRestitution,
+                    BoundaryThreshold          = _boundaryThreshold,
+                    BoundaryStrength           = _boundaryStrength,
+                    PlayerInputDir             = CurrentPhysicsInputDir,
+                    PlayerInputForce           = _playerInputForce,
+                    PlayerMaxSpeed             = _playerMaxSpeed,
+                    PlayerParticleCount        = _playerParticleCount,
+                    PlayerResistanceFullAt     = _playerResistanceFullAt,
+                    PlayerMaxExternalReduction = _playerMaxExternalReduction,
+                    ExternalForceOnPlayer      = _externalForceOnPlayer,
+                    IsInPlayerCluster          = _isInPlayerCluster,
+                    RepelTimer                 = _repelTimer,
+                    ForceScale                 = _forceScale,
+                    UnboundedWorld             = _unboundedWorld,
+                    ShieldActive               = _shieldActive,
+                    ShieldPlayerRepulsionScale = _shieldPlayerRepulsionScale,
+                    PlayerCentroid             = _playerCentroid,
+                    ClusterCohesionStrength    = _clusterCohesionStrength,
+                };
+
+                _pendingHandle = physicsJob.Schedule(_particleCount, 64, gridHandle);
+                _jobPending    = true;
+            }
 
             // Swap buffers: next read = just-written output
             (_positionsRead, _positionsWrite) = (_positionsWrite, _positionsRead);
+
+            if (_simulationBackend == SimulationBackend.GPUCompute && _gpuBackend != null)
+            {
+                // GPU backend does not build CPU grid for physics, but gameplay systems still rely on Grid.
+                bool shouldRebuildGridThisFrame =
+                    ((_gpuWorkFrameCounter - 1) % Mathf.Max(1, _gpuGridRebuildIntervalFrames)) ==
+                    (_gpuGridRebuildPhase % Mathf.Max(1, _gpuGridRebuildIntervalFrames));
+                if (shouldRebuildGridThisFrame)
+                {
+                    float gridStartRt = _enablePerfLogging ? Time.realtimeSinceStartup : 0f;
+                    EnsureGridCapacity(_particleCount);
+                    SpatialGrid.Schedule(_positionsRead, _particleCount, _grid, _cellSize).Complete();
+                    if (_enablePerfLogging)
+                        _perfGridMsAccum += (Time.realtimeSinceStartup - gridStartRt) * 1000f;
+                }
+            }
+
+            if (_enablePerfLogging)
+            {
+                _perfFixedUpdateMsAccum += (Time.realtimeSinceStartup - fixedStartRt) * 1000f;
+                _perfSamples++;
+            }
         }
 
         private void LateUpdate()
         {
+            float lateStartRt = _enablePerfLogging ? Time.realtimeSinceStartup : 0f;
             if (_jobPending)
             {
                 _pendingHandle.Complete();
@@ -462,13 +661,27 @@ namespace ParticleLife.Simulation
                     PositionsRender = _positionsRender,
                 }.Schedule(_particleCount, 64);
 
-                var playerVelHandle = new ComputePlayerAverageVelocityJob
+                JobHandle playerVelHandle;
+                if (_playerRenderScratch.IsCreated && _playerRenderScratchCount > 0)
                 {
-                    Velocities    = _velocities,
-                    IsPlayerOwned = _isPlayerOwned,
-                    ParticleCount = _particleCount,
-                    Result        = _playerVelocityResult,
-                }.Schedule();
+                    playerVelHandle = new ComputePlayerAverageVelocityFromScratchJob
+                    {
+                        Velocities         = _velocities,
+                        PlayerScratch      = _playerRenderScratch,
+                        PlayerScratchCount = _playerRenderScratchCount,
+                        Result             = _playerVelocityResult,
+                    }.Schedule();
+                }
+                else
+                {
+                    playerVelHandle = new ComputePlayerAverageVelocityJob
+                    {
+                        Velocities    = _velocities,
+                        IsPlayerOwned = _isPlayerOwned,
+                        ParticleCount = _particleCount,
+                        Result        = _playerVelocityResult,
+                    }.Schedule();
+                }
 
                 JobHandle.CombineDependencies(extrapolateHandle, playerVelHandle).Complete();
                 _playerOwnedAverageVelocity = _playerVelocityResult.Value;
@@ -479,8 +692,48 @@ namespace ParticleLife.Simulation
                 UpdatePlayerOwnedAverageVelocity();
             }
 
+            float renderStartRt = _enablePerfLogging ? Time.realtimeSinceStartup : 0f;
             _renderer.Render(renderPositions, _types, _isPlayerOwned, _particleCount, _typeRadiiNative,
                 _playerRenderScratch, _playerRenderScratchCount);
+            if (_enablePerfLogging)
+                _perfRenderMsAccum += (Time.realtimeSinceStartup - renderStartRt) * 1000f;
+
+            if (_enablePerfLogging)
+            {
+                _perfLateUpdateMsAccum += (Time.realtimeSinceStartup - lateStartRt) * 1000f;
+                _perfLogElapsed += Time.unscaledDeltaTime;
+                if (_perfLogElapsed >= _perfLogIntervalSeconds && _perfSamples > 0)
+                {
+                    float fps = 1f / math.max(0.0001f, Time.smoothDeltaTime);
+                    _perfLastFps = fps;
+                    _perfLastFixedMs = _perfFixedUpdateMsAccum / _perfSamples;
+                    _perfLastLateMs = _perfLateUpdateMsAccum / _perfSamples;
+                    _perfLastGpuUploadMs = _perfGpuUploadMsAccum / _perfSamples;
+                    _perfLastGpuStepMs = _perfGpuStepMsAccum / _perfSamples;
+                    _perfLastGpuReadbackMs = _perfGpuReadbackMsAccum / _perfSamples;
+                    _perfLastGridMs = _perfGridMsAccum / _perfSamples;
+                    _perfLastRenderMs = _perfRenderMsAccum / _perfSamples;
+                    _perfLastPhysicsWaitMs = _perfPhysicsWaitCount > 0 ? (_perfPhysicsWaitMsAccum / _perfPhysicsWaitCount) : 0f;
+                    Debug.Log(
+                        $"[PerfSample] particles={_particleCount} fps={fps:F1} " +
+                        $"fixed={_perfFixedUpdateMsAccum / _perfSamples:F2}ms late={_perfLateUpdateMsAccum / _perfSamples:F2}ms " +
+                        $"gpuUpload={_perfGpuUploadMsAccum / _perfSamples:F2}ms gpuStep={_perfGpuStepMsAccum / _perfSamples:F2}ms " +
+                        $"gpuReadback={_perfGpuReadbackMsAccum / _perfSamples:F2}ms grid={_perfGridMsAccum / _perfSamples:F2}ms " +
+                        $"render={_perfRenderMsAccum / _perfSamples:F2}ms");
+
+                    _perfLogElapsed = 0f;
+                    _perfFixedUpdateMsAccum = 0f;
+                    _perfLateUpdateMsAccum = 0f;
+                    _perfGpuUploadMsAccum = 0f;
+                    _perfGpuStepMsAccum = 0f;
+                    _perfGpuReadbackMsAccum = 0f;
+                    _perfGridMsAccum = 0f;
+                    _perfRenderMsAccum = 0f;
+                    _perfPhysicsWaitMsAccum = 0f;
+                    _perfPhysicsWaitCount = 0;
+                    _perfSamples = 0;
+                }
+            }
         }
 
         private void OnDestroy()
@@ -506,6 +759,7 @@ namespace ParticleLife.Simulation
             _playerVelocityResult .Dispose();
             _gravityMatrix        .Dispose();
             _grid                 .Dispose();
+            _gpuBackend?.Dispose();
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
@@ -667,6 +921,8 @@ namespace ParticleLife.Simulation
             if (!Mathf.Approximately(entry.DistanceThreshold, previous.DistanceThreshold))
                 _cellSizeDirty = true;
 
+            _gpuMatrixDirty = true;
+
             OnGravityMatrixChanged?.Invoke();
         }
 
@@ -751,6 +1007,15 @@ namespace ParticleLife.Simulation
 
         /// <summary>True when boundary bounce and repulsion are disabled (unbounded world mode).</summary>
         public bool UnboundedWorld => _unboundedWorld;
+        public float PerfLastFps => _perfLastFps;
+        public float PerfLastFixedMs => _perfLastFixedMs;
+        public float PerfLastLateMs => _perfLastLateMs;
+        public float PerfLastGpuUploadMs => _perfLastGpuUploadMs;
+        public float PerfLastGpuStepMs => _perfLastGpuStepMs;
+        public float PerfLastGpuReadbackMs => _perfLastGpuReadbackMs;
+        public float PerfLastGridMs => _perfLastGridMs;
+        public float PerfLastRenderMs => _perfLastRenderMs;
+        public float PerfLastPhysicsWaitMs => _perfLastPhysicsWaitMs;
 
         /// <summary>
         /// Activates or deactivates the gravity shield. While active, external forces on
@@ -781,8 +1046,10 @@ namespace ParticleLife.Simulation
             _pendingRepelVelocityBlend = velocityBlend;
         }
 
-        private void ExecuteRepelNonPlayerParticles(float impulse, float2 centroid, float duration, float radius, float velocityBlend)
+        private bool ExecuteRepelNonPlayerParticles(float impulse, float2 centroid, float duration, float radius, float velocityBlend)
         {
+            bool mutated = false;
+
             // Pre-build player expansion direction buffer — O(n) once, avoids O(n) inner scan per candidate.
             _repelPlayerCount = 0;
             for (int j = 0; j < _particleCount; j++)
@@ -807,7 +1074,10 @@ namespace ParticleLife.Simulation
                 float2 outwardVel = len > 0.001f ? (dir / len) * impulse : new float2(1f, 0f) * impulse;
                 _velocities[i]    = math.lerp(outwardVel, _velocities[i], velocityBlend);
                 _repelTimer[i]    = duration;
+                mutated = true;
             }
+
+            return mutated;
         }
 
         /// <summary>
@@ -841,7 +1111,7 @@ namespace ParticleLife.Simulation
         /// <paramref name="fraction"/>. Converted particles are released from player ownership.
         /// Must be called on the main thread with no job running.
         /// </summary>
-        private void ExecuteScatterPlayerParticles(float fraction, float2 centroid, float impulse)
+        private bool ExecuteScatterPlayerParticles(float fraction, float2 centroid, float impulse)
         {
             bool applyImpulse = impulse > 0.001f;
 
@@ -860,7 +1130,7 @@ namespace ParticleLife.Simulation
                 converted++;
             }
 
-            if (converted > 0) return;
+            if (converted > 0) return true;
 
             // Guarantee: always convert at least one particle.
             // Reservoir sampling — uniform random selection in a single pass, no allocation.
@@ -872,13 +1142,14 @@ namespace ParticleLife.Simulation
                 seen++;
                 if (_cullRng.NextInt(0, seen) == 0) chosen = i;
             }
-            if (chosen < 0) return;
+            if (chosen < 0) return false;
 
             _types[chosen]             = (byte)_cullRng.NextInt(0, _typeCount);
             _isPlayerOwned[chosen]     = false;
             _isInPlayerCluster[chosen] = false;
             if (applyImpulse)
                 ApplyOutwardImpulse(chosen, centroid, impulse);
+            return true;
         }
 
         private void ApplyOutwardImpulse(int index, float2 centroid, float impulse)
@@ -923,6 +1194,8 @@ namespace ParticleLife.Simulation
             _playerRenderScratchCount = 0;
 
             SpawnInitialParticles();
+            _gpuStateDirty = true;
+            _gpuEntityMetaDirty = true;
         }
 
         /// <summary>
@@ -932,7 +1205,13 @@ namespace ParticleLife.Simulation
         {
             CompletePendingJobIfNeeded();
             if ((uint)index < (uint)_particleCount)
-                _isPlayerOwned[index] = owned;
+            {
+                if (_isPlayerOwned[index] != owned)
+                {
+                    _isPlayerOwned[index] = owned;
+                    _gpuEntityMetaDirty = true;
+                }
+            }
         }
 
         /// <summary>
@@ -942,7 +1221,13 @@ namespace ParticleLife.Simulation
         public void SetInPlayerCluster(int index, bool inCluster)
         {
             if ((uint)index < (uint)_particleCount)
-                _isInPlayerCluster[index] = inCluster;
+            {
+                if (_isInPlayerCluster[index] != inCluster)
+                {
+                    _isInPlayerCluster[index] = inCluster;
+                    _gpuEntityMetaDirty = true;
+                }
+            }
         }
 
         /// <summary>
@@ -1022,8 +1307,9 @@ namespace ParticleLife.Simulation
         /// Safe to call on the main thread: the pending physics job is always completed
         /// before FixedUpdate modifies any NativeArray.
         /// </summary>
-        private void CullAndRespawn(float2 center, float2 moveDir, float directionBias)
+        private bool CullAndRespawn(float2 center, float2 moveDir, float directionBias)
         {
+            bool recycledAny = false;
             float despawnR2 = _despawnRadius * _despawnRadius;
 
             // Precompute forward direction once; bias probability applied per group seed.
@@ -1078,9 +1364,25 @@ namespace ParticleLife.Simulation
                 _velocities[i]     = float2.zero;
                 _types[i]          = newType;
                 _idleTime[i]       = 0f;
+                recycledAny = true;
 
                 _cullTypeCounts[newType]++;   // keep distribution balanced within the batch
             }
+
+            return recycledAny;
+        }
+
+        private void EnsureGridCapacity(int requiredParticleCount)
+        {
+            int required = Mathf.Max(256, Mathf.NextPowerOfTwo(Mathf.Max(1, requiredParticleCount) * 4));
+            if (required <= _gridCapacity) return;
+            if (required > _maxParticleCount * 4) required = _maxParticleCount * 4;
+            if (required <= _gridCapacity) return;
+
+            var newGrid = new NativeParallelMultiHashMap<int2, int>(required, Allocator.Persistent);
+            if (_grid.IsCreated) _grid.Dispose();
+            _grid = newGrid;
+            _gridCapacity = required;
         }
 
         /// <summary>
@@ -1144,5 +1446,35 @@ namespace ParticleLife.Simulation
         /// <summary>Clears the Inspector matrix config so runtime random generation is used instead.</summary>
         [ContextMenu("清除引力矩阵配置（恢复随机）")]
         private void ClearMatrixConfig() => _gravityMatrixConfig = null;
+
+        [ContextMenu("性能基线/2k 粒子")]
+        private void BenchmarkPreset2k() => ApplyBenchmarkPreset(2000);
+
+        [ContextMenu("性能基线/5k 粒子")]
+        private void BenchmarkPreset5k() => ApplyBenchmarkPreset(5000);
+
+        [ContextMenu("性能基线/10k 粒子")]
+        private void BenchmarkPreset10k() => ApplyBenchmarkPreset(10000);
+
+        private void ApplyBenchmarkPreset(int particleCount)
+        {
+            _initialCount = Mathf.Clamp(particleCount, 1, _maxParticleCount);
+            Reinitialize();
+            Debug.Log($"[PerfSample] benchmark preset applied: {_initialCount} particles");
+        }
+
+        private void UpdateAdaptivePhysicsHz()
+        {
+            if (!_adaptivePhysicsHzEnabled || _fixedPhysicsHz < 1) return;
+
+            int targetHz = _particleCount >= _adaptivePhysicsParticleThreshold
+                ? Mathf.Min(_fixedPhysicsHz, _adaptivePhysicsLowHz)
+                : _fixedPhysicsHz;
+            if (targetHz < 1) targetHz = 1;
+            if (targetHz == _activePhysicsHz) return;
+
+            _activePhysicsHz = targetHz;
+            Time.fixedDeltaTime = 1f / _activePhysicsHz;
+        }
     }
 }
