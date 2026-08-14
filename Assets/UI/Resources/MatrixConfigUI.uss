@@ -19,10 +19,11 @@
 /* ── Config-loaded hint ───────────────────────────────────────────── */
 
 .config-loaded-hint {
-    font-size: 36px;
+    font-size: 22px;
     color: rgb(255, 255, 255);
     align-self: center;
     margin-right: 10px;
+    white-space: nowrap;
 }
 
 /* ── Panel ────────────────────────────────────────────────────────── */
@@ -44,15 +45,25 @@
 
 .header-row {
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
     margin-bottom: 8px;
 }
 
-.panel-title {
+.header-actions {
     flex-grow: 1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.panel-title {
+    flex-shrink: 0;
     font-size: 30px;
     color: rgb(220, 220, 220);
     -unity-font-style: bold;
+    margin-right: 8px;
 }
 
 .grid-hint {
@@ -135,13 +146,13 @@
 
 .matrix-cell {
     flex-grow: 1;
-    flex-shrink: 0;
+    flex-shrink: 1;
     margin: 4px;
     padding: 8px 10px;
     border-radius: 4px;
     border-width: 1px;
     border-color: rgba(255, 255, 255, 0.08);
-    min-width: 280px;
+    min-width: 220px;
     transition-property: background-color;
     transition-duration: 0.15s;
 }
@@ -372,8 +383,8 @@
 
 .col-header-cell {
     flex-grow: 1;
-    flex-shrink: 0;
-    min-width: 280px;
+    flex-shrink: 1;
+    min-width: 220px;
     margin: 2px 4px;
     flex-direction: row;
     align-items: center;
@@ -403,4 +414,104 @@
     border-radius: 2px;
     background-color: rgba(255, 255, 255, 0.10);
     white-space: nowrap;
+}
+
+/* ── Responsive: narrow / short / compact (Web + windowed) ─────────── */
+
+.matrix-narrow .matrix-cell,
+.matrix-narrow .col-header-cell {
+    min-width: 180px;
+}
+
+.matrix-narrow .action-button {
+    font-size: 22px;
+    padding: 8px 14px;
+}
+
+.matrix-narrow .panel-title {
+    font-size: 24px;
+}
+
+.matrix-narrow .config-loaded-hint,
+.matrix-narrow .keyboard-hint,
+.matrix-narrow .grid-hint {
+    font-size: 18px;
+}
+
+.matrix-narrow .close-button {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    font-size: 22px;
+}
+
+.matrix-short .matrix-panel {
+    margin-top: 8px;
+    margin-right: 8px;
+    margin-bottom: 8px;
+    margin-left: 8px;
+    padding: 10px;
+}
+
+.matrix-short .grid-hint {
+    display: none;
+}
+
+.matrix-short .keyboard-hint {
+    font-size: 18px;
+    margin-bottom: 2px;
+}
+
+.matrix-short .preset-foldout > Toggle,
+.matrix-short .preset-foldout > Toggle > Label {
+    font-size: 20px;
+    min-height: 36px;
+}
+
+.matrix-compact .matrix-cell,
+.matrix-compact .col-header-cell {
+    min-width: 160px;
+    margin: 2px;
+    padding: 6px 8px;
+}
+
+.matrix-compact .action-button {
+    font-size: 18px;
+    padding: 6px 10px;
+    margin-left: 4px;
+}
+
+.matrix-compact .panel-title {
+    font-size: 20px;
+}
+
+.matrix-compact .config-loaded-hint,
+.matrix-compact .keyboard-hint,
+.matrix-compact .preset-item-name,
+.matrix-compact .preset-item-button,
+.matrix-compact .preset-empty-label {
+    font-size: 16px;
+}
+
+.matrix-compact .close-button {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    font-size: 18px;
+}
+
+.matrix-compact .preset-foldout > Toggle,
+.matrix-compact .preset-foldout > Toggle > Label {
+    font-size: 16px;
+    min-height: 32px;
+}
+
+.matrix-compact .row-header,
+.matrix-compact .col-header-spacer,
+.matrix-compact .row-label {
+    min-width: 72px;
+}
+
+.matrix-compact .matrix-cell Slider .unity-base-slider__input {
+    min-width: 80px;
 }
