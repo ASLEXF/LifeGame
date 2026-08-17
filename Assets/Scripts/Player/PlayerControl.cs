@@ -49,9 +49,14 @@ namespace ParticleLife.Player
         private const int AdoptEveryNFrames = 3;
         private int _adoptFrameCounter;
 
-        // Union-Find arrays, reused each frame (allocated once at Start).
-        private int[] _ufParent;
-        private int[] _ufSize;
+        // Union-Find arrays — NativeArray so HandleSplitsJob (Burst) can access them.
+        private NativeArray<int> _ufParent;
+        private NativeArray<int> _ufSize;
+
+        // Split detection runs every N frames; connectivity changes slowly so a 1-frame
+        // delay before reverting a fragment is imperceptible.
+        private const int SplitCheckEveryNFrames = 2;
+        private int _splitFrameCounter;
 
         // Scratch buffer: player-owned indices collected each HandleSplits call.
         // NativeArray so it can be passed directly to MarkPlayerClusterJob without copying.
@@ -85,8 +90,8 @@ namespace ParticleLife.Player
         {
             int maxCount   = _simulation.MaxParticleCount;
             _bfsVisited    = new bool[maxCount];
-            _ufParent      = new int[maxCount];
-            _ufSize        = new int[maxCount];
+            _ufParent      = new NativeArray<int>(maxCount, Allocator.Persistent);
+            _ufSize        = new NativeArray<int>(maxCount, Allocator.Persistent);
             _playerScratch = new NativeArray<int>(maxCount, Allocator.Persistent);
             _adoptionQueue = new NativeQueue<int>(Allocator.Persistent);
 
@@ -102,6 +107,8 @@ namespace ParticleLife.Player
             if (_gameState != null)
                 _gameState.OnStateChanged -= OnStateChanged;
 
+            if (_ufParent.IsCreated)      _ufParent.Dispose();
+            if (_ufSize.IsCreated)        _ufSize.Dispose();
             if (_playerScratch.IsCreated) _playerScratch.Dispose();
             if (_adoptionQueue.IsCreated) _adoptionQueue.Dispose();
         }
@@ -332,7 +339,7 @@ namespace ParticleLife.Player
             _simulation.SetRipplePlayerType(_playerType);
         }
 
-        // ── Split detection (Union-Find, immediate revert) ────────────────────
+        // ── Split detection (Union-Find via Burst IJob) ───────────────────────
 
         private void HandleSplits(
             NativeArray<float2>                   positions,
@@ -341,79 +348,32 @@ namespace ParticleLife.Player
             NativeParallelMultiHashMap<int2, int> grid,
             float                                 cellSize)
         {
-            // Loop 1: init UF only for player particles + collect their indices.
-            // Skips ~(n-p)/n writes vs the old full-n init.
+            // Loop 1: collect player indices into scratch — O(N) scan, always runs.
+            // UF init moved into HandleSplitsJob so this pass is branch-only.
             _playerScratchCount = 0;
             for (int i = 0; i < count; i++)
             {
                 if (!isPlayerOwned[i]) continue;
-                _ufParent[i] = i;
-                _ufSize[i]   = 1;
                 _playerScratch[_playerScratchCount++] = i;
             }
 
-            // Loop 2: build UF via spatial grid (iterate scratch instead of full array).
-            float threshSq  = _connectionRadius * _connectionRadius;
-            int   gridRange = (int)math.ceil(_connectionRadius / cellSize);
+            // Loops 2-4 (UF build + revert) run every SplitCheckEveryNFrames frames.
+            // Connectivity changes slowly; 1-frame revert delay is imperceptible.
+            if (_splitFrameCounter++ % SplitCheckEveryNFrames != 0) return;
 
-            for (int s = 0; s < _playerScratchCount; s++)
+            new HandleSplitsJob
             {
-                int i = _playerScratch[s];
-
-                int2 cell = new int2(
-                    (int)math.floor(positions[i].x / cellSize),
-                    (int)math.floor(positions[i].y / cellSize));
-
-                for (int dx = -gridRange; dx <= gridRange; dx++)
-                for (int dy = -gridRange; dy <= gridRange; dy++)
-                {
-                    int2 neighborCell = new int2(cell.x + dx, cell.y + dy);
-                    if (!grid.TryGetFirstValue(neighborCell, out int j, out var it)) continue;
-                    do
-                    {
-                        if (j <= i || !isPlayerOwned[j]) continue;
-                        if (math.distancesq(positions[i], positions[j]) < threshSq)
-                            UFUnion(i, j);
-                    }
-                    while (grid.TryGetNextValue(out j, ref it));
-                }
-            }
-
-            // Loop 3: find largest component — O(p) via scratch.
-            int mainRoot = -1;
-            int mainSize = 0;
-            for (int s = 0; s < _playerScratchCount; s++)
-            {
-                int i = _playerScratch[s];
-                if (UFFind(i) != i) continue;
-                if (_ufSize[i] > mainSize) { mainSize = _ufSize[i]; mainRoot = i; }
-            }
-
-            // Loop 4: revert non-main fragments — O(p) via scratch.
-            for (int s = 0; s < _playerScratchCount; s++)
-            {
-                int i = _playerScratch[s];
-                if (mainRoot >= 0 && UFFind(i) == mainRoot) continue;
-                _simulation.SetPlayerOwned(i, false);
-            }
-        }
-
-        private int UFFind(int x)
-        {
-            while (_ufParent[x] != x)
-            {
-                _ufParent[x] = _ufParent[_ufParent[x]];
-                x            = _ufParent[x];
-            }
-            return x;
-        }
-
-        private void UFUnion(int a, int b)
-        {
-            int ra = UFFind(a), rb = UFFind(b);
-            if (ra == rb) return;
-            if (_ufSize[ra] >= _ufSize[rb]) { _ufParent[rb] = ra; _ufSize[ra] += _ufSize[rb]; }
-            else                             { _ufParent[ra] = rb; _ufSize[rb] += _ufSize[ra]; }
+                PlayerScratch      = _playerScratch,
+                PlayerScratchCount = _playerScratchCount,
+                Positions          = positions,
+                IsPlayerOwned      = isPlayerOwned,
+                Grid               = grid,
+                UFParent           = _ufParent,
+                UFSize             = _ufSize,
+                CellSize           = cellSize,
+                ThresholdSq        = _connectionRadius * _connectionRadius,
+                GridRange          = (int)math.ceil(_connectionRadius / cellSize),
+            }.Schedule().Complete();
         }
 
         // ── Input ─────────────────────────────────────────────────────────────
@@ -445,6 +405,11 @@ namespace ParticleLife.Player
 
         // ── Adoption ──────────────────────────────────────────────────────────
 
+        // Cap adoptions per BFS call to prevent O(N × k²) spikes during rapid cluster growth.
+        // Unprocessed candidates are re-seeded on the next call (3 frames later) from the
+        // updated _playerScratch, so expansion continues correctly across multiple calls.
+        private const int MaxAdoptionsPerCall = 200;
+
         /// <summary>
         /// Adopts non-player particles of the same type as the player cluster via
         /// BFS over the spatial grid. Transitively expands through chains of same-type
@@ -472,6 +437,7 @@ namespace ParticleLife.Player
                     queue.Enqueue(i);
             }
 
+            int adopted = 0;
             while (queue.TryDequeue(out int idx))
             {
                 int2 cell = (int2)math.floor(positions[idx] / cellSize);
@@ -488,14 +454,14 @@ namespace ParticleLife.Player
                         if (math.distancesq(positions[idx], positions[j]) < cellSizeSq)
                         {
                             _simulation.SetPlayerOwned(j, true);
-                            _playerScratch[_playerScratchCount++] = j;  // keep scratch current for ShedEdge
+                            _playerScratch[_playerScratchCount++] = j;
                             queue.Enqueue(j);
+                            if (++adopted >= MaxAdoptionsPerCall) return;
                         }
                     }
                     while (grid.TryGetNextValue(out j, ref it));
                 }
             }
-
         }
 
         // ── Shedding ──────────────────────────────────────────────────────────

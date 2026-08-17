@@ -64,7 +64,10 @@ namespace ParticleLife.Management
                     ["start"]            = "开始游戏",
                     ["config"]           = "配置引力矩阵",
                     ["hint_keyboard"]    = "按 Enter / Space 开始游戏",
+                    ["hint_touch"]       = "点「开始游戏」进入",
                     ["lang_toggle"]      = "EN",
+                    ["mobile_skill"]     = "技能",
+                    ["mobile_tab"]       = "TAB",
 
                     // ── HUD ────────────────────────────────────────────
                     ["hud_player_count"] = "玩家粒子数：{0}",
@@ -76,6 +79,7 @@ namespace ParticleLife.Management
                     ["fail_survival"]    = "存活时间：{0}",
                     ["fail_peak"]        = "峰值粒子数：{0}",
                     ["fail_restart"]     = "重新开始  [R]",
+                    ["fail_restart_touch"] = "重新开始",
 
                     // ── Time formatting ────────────────────────────────
                     ["time_format_ms"]   = "{0}分{1:D2}秒",
@@ -95,6 +99,7 @@ namespace ParticleLife.Management
                     ["matrix_tip_randomize"] = "随机生成全部引力与斥力值",
                     ["matrix_tip_reset_def"] = "还原为程序内置默认值（会自动保存）",
                     ["matrix_keyboard_hint"] = "[Tab] 切换面板    [Esc] 关闭",
+                    ["matrix_touch_hint"]    = "点右上角 TAB 切换面板",
                     ["matrix_config_loaded"] = "已自动读取 matrix_config.json",
                     ["matrix_save_hint"]     = "已保存修改到 matrix_config.json",
 
@@ -115,7 +120,10 @@ namespace ParticleLife.Management
                     ["start"]            = "Start Game",
                     ["config"]           = "Configure Matrix",
                     ["hint_keyboard"]    = "Press Enter / Space to Start",
+                    ["hint_touch"]       = "Tap Start to play",
                     ["lang_toggle"]      = "简中",
+                    ["mobile_skill"]     = "Skill",
+                    ["mobile_tab"]       = "TAB",
 
                     // ── HUD ────────────────────────────────────────────
                     ["hud_player_count"] = "Player: {0}",
@@ -127,6 +135,7 @@ namespace ParticleLife.Management
                     ["fail_survival"]    = "Survived: {0}",
                     ["fail_peak"]        = "Peak: {0}",
                     ["fail_restart"]     = "Restart  [R]",
+                    ["fail_restart_touch"] = "Restart",
 
                     // ── Time formatting ────────────────────────────────
                     ["time_format_ms"]   = "{0}m {1:D2}s",
@@ -146,6 +155,7 @@ namespace ParticleLife.Management
                     ["matrix_tip_randomize"] = "Randomize all attraction and repulsion values",
                     ["matrix_tip_reset_def"] = "Restore built-in defaults (auto-saved)",
                     ["matrix_keyboard_hint"] = "[Tab] Toggle Panel    [Esc] Close",
+                    ["matrix_touch_hint"]    = "Tap TAB (top-right) to toggle",
                     ["matrix_config_loaded"] = "Loaded matrix_config.json",
                     ["matrix_save_hint"]     = "Saved to matrix_config.json",
 

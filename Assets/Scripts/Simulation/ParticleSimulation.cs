@@ -119,6 +119,14 @@ namespace ParticleLife.Simulation
         [Tooltip("固定物理频率（Hz）。≥1 时在 Awake 设置 Time.fixedDeltaTime = 1/Hz；120 与 144Hz 显示器更合拍。0 = 不改项目设置")]
         [SerializeField] private int _fixedPhysicsHz = 120;
 
+        [Tooltip("目标渲染帧率（fps）。锁定后减少可变帧时长对 FixedUpdate 追赶的放大效应。0 = 不设置（由 VSync 或平台决定）")]
+        [SerializeField] private int _targetFrameRate = 60;
+
+        [Tooltip("单渲染帧内允许追赶的最大物理时长（秒）。超出则物理慢放而非雪崩追赶。\n" +
+                 "建议 = 3 / physicsHz（25ms @ 120Hz = 最多 3 次 FixedUpdate/帧）。\n" +
+                 "0 = 不修改（保留 Unity 默认 0.333s，有雪崩风险）")]
+        [SerializeField] private float _maxPhysicsCatchupSec = 0f;
+
         [Tooltip("离散积分与显示器刷新对齐方式。速度外推可修正先前「插值 alpha」方向错误导致的后发糊")]
         [SerializeField] private VisualSmoothingMode _visualSmoothing = VisualSmoothingMode.VelocityExtrapolation;
 
@@ -233,7 +241,20 @@ namespace ParticleLife.Simulation
                 _gameInput = GetComponent<GameInput>();
 
             if (_fixedPhysicsHz >= 1)
+            {
                 Time.fixedDeltaTime = 1f / _fixedPhysicsHz;
+
+                // Prevent FixedUpdate catch-up avalanche: default maximumDeltaTime is 0.333s,
+                // allowing up to 40 consecutive physics steps after any frame stall. Capping at
+                // 3 steps (25ms @ 120Hz) makes physics slow down instead of cascading.
+                float catchupCap = _maxPhysicsCatchupSec > 0f
+                    ? _maxPhysicsCatchupSec
+                    : 3f / _fixedPhysicsHz;
+                Time.maximumDeltaTime = catchupCap;
+            }
+
+            if (_targetFrameRate > 0)
+                Application.targetFrameRate = _targetFrameRate;
 
             // Allocate particle arrays at max capacity
             _positionsRead         = new NativeArray<float2>(_maxParticleCount, Allocator.Persistent);

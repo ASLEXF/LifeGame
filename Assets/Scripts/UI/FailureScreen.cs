@@ -1,4 +1,5 @@
 using System.Collections;
+using ParticleLife.Input;
 using ParticleLife.Management;
 using ParticleLife.Simulation;
 using TMPro;
@@ -55,6 +56,7 @@ namespace ParticleLife.UI
             _gameState.OnStateChanged += OnStateChanged;
             _restartButton.onClick.AddListener(OnRestartClicked);
             Localization.OnLanguageChanged += OnLanguageChangedHandler;
+            InputStyle.Changed += OnInputStyleChanged;
         }
 
         private void OnDestroy()
@@ -63,6 +65,7 @@ namespace ParticleLife.UI
                 _gameState.OnStateChanged -= OnStateChanged;
 
             Localization.OnLanguageChanged -= OnLanguageChangedHandler;
+            InputStyle.Changed -= OnInputStyleChanged;
         }
 
         private void Update()
@@ -122,6 +125,11 @@ namespace ParticleLife.UI
             if (_isVisible) RefreshText();
         }
 
+        private void OnInputStyleChanged(PlayerInputStyle _)
+        {
+            if (_isVisible) RefreshText();
+        }
+
         private void RefreshText()
         {
             if (_titleText != null)
@@ -133,7 +141,8 @@ namespace ParticleLife.UI
                 Localization.Get("fail_peak"), _cachedPeakCount);
 
             if (_restartButtonText != null)
-                _restartButtonText.text = Localization.Get("fail_restart");
+                _restartButtonText.text = Localization.Get(
+                    InputStyle.IsTouch ? "fail_restart_touch" : "fail_restart");
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

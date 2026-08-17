@@ -1,4 +1,5 @@
 using ParticleLife.Core;
+using ParticleLife.Input;
 using ParticleLife.Management;
 using ParticleLife.Persistence;
 using ParticleLife.Simulation;
@@ -49,17 +50,29 @@ namespace ParticleLife.UI
         private Slider[] _distanceSliders;
 
         private VisualElement _panel;
+        private VisualElement _root;
         private UIDocument    _document;
         private bool          _isOpen;
         private bool          _lastIsAssigned;
         private Font          _runtimeUiFont;
         private StyleSheet    _matrixStyleSheet;
         private int           _matrixSizeSnapshot;
+        private Label         _inputHintLabel;
         private Label         _saveHintLabel;
         private bool          _wasSaved;
         private Button        _presetSaveButton;
         private VisualElement _presetListContainer;
+        private int           _lastScreenWidth;
+        private int           _lastScreenHeight;
         public event Action<bool> PanelVisibilityChanged;
+
+        // Layout units after PanelSettings scale, or CSS pixels on WebGL.
+        private const float NarrowLayoutWidth    = 1680f;
+        private const float ShortLayoutHeight    = 920f;
+        private const int   NarrowScreenWidth    = 1280;
+        private const int   ShortScreenHeight    = 720;
+        private const int   CompactScreenWidth   = 1024;
+        private const int   CompactScreenHeight  = 600;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────
 
@@ -74,11 +87,14 @@ namespace ParticleLife.UI
             _panel.style.display = DisplayStyle.None;
 
             Localization.OnLanguageChanged += OnLanguageChangedHandler;
+            InputStyle.Changed += OnInputStyleChanged;
         }
 
         private void OnDestroy()
         {
             Localization.OnLanguageChanged -= OnLanguageChangedHandler;
+            InputStyle.Changed -= OnInputStyleChanged;
+            UnregisterRootGeometryCallback();
         }
 
         private void OnLanguageChangedHandler(Localization.Language _)
@@ -87,14 +103,17 @@ namespace ParticleLife.UI
             _panel.style.display = _isOpen ? DisplayStyle.Flex : DisplayStyle.None;
         }
 
+        private void OnInputStyleChanged(PlayerInputStyle _)
+        {
+            RefreshInputHint();
+        }
+
         private void Update()
         {
-            Keyboard kb = Keyboard.current;
-            if (kb == null) return;
-
             bool currentIsAssigned = _playerControl != null && _playerControl.IsAssigned;
-            bool needRebuild = _matrixSizeSnapshot != _simulation.TotalTypeCount
-                            || currentIsAssigned != _lastIsAssigned;
+            bool needRebuild = _simulation != null
+                            && (_matrixSizeSnapshot != _simulation.TotalTypeCount
+                            || currentIsAssigned != _lastIsAssigned);
             if (needRebuild)
             {
                 _lastIsAssigned = currentIsAssigned;
@@ -103,6 +122,12 @@ namespace ParticleLife.UI
                 _isOpen = reopen;
                 _panel.style.display = reopen ? DisplayStyle.Flex : DisplayStyle.None;
             }
+
+            if (Screen.width != _lastScreenWidth || Screen.height != _lastScreenHeight)
+                ApplyResponsiveClasses(_root);
+
+            Keyboard kb = Keyboard.current;
+            if (kb == null) return;
 
             if (kb.tabKey.wasPressedThisFrame)
                 Toggle();
@@ -115,6 +140,7 @@ namespace ParticleLife.UI
         private void BuildUI()
         {
             var root = _document.rootVisualElement;
+            BindRoot(root);
             root.Clear();
             root.AddToClassList("matrix-root");
             EnsureRuntimeUiFont();
@@ -147,10 +173,8 @@ namespace ParticleLife.UI
             title.AddToClassList("panel-title");
             header.Add(title);
 
-            // Spacer pushes hint + buttons to the right
-            var spacer = new VisualElement();
-            spacer.AddToClassList("header-spacer");
-            header.Add(spacer);
+            var actions = new VisualElement();
+            actions.AddToClassList("header-actions");
 
             _saveHintLabel = new Label();
             _saveHintLabel.AddToClassList("config-loaded-hint");
@@ -168,13 +192,13 @@ namespace ParticleLife.UI
             {
                 _saveHintLabel.style.display = DisplayStyle.None;
             }
-            header.Add(_saveHintLabel);
+            actions.Add(_saveHintLabel);
 
             var presetBtnPresets = PresetPersistence.GetPresets();
             _presetSaveButton = new Button(OnPresetSave) { text = Localization.Get("preset_save") };
             _presetSaveButton.AddToClassList("action-button");
             _presetSaveButton.SetEnabled(presetBtnPresets.Count < PresetPersistence.MaxPresets);
-            header.Add(_presetSaveButton);
+            actions.Add(_presetSaveButton);
 
             var randomizeBtn = new Button(OnRandomize)
             {
@@ -182,7 +206,7 @@ namespace ParticleLife.UI
                 tooltip = Localization.Get("matrix_tip_randomize"),
             };
             randomizeBtn.AddToClassList("action-button");
-            header.Add(randomizeBtn);
+            actions.Add(randomizeBtn);
 
             var defaultBtn = new Button(OnResetToDefaults)
             {
@@ -190,18 +214,21 @@ namespace ParticleLife.UI
                 tooltip = Localization.Get("matrix_tip_reset_def"),
             };
             defaultBtn.AddToClassList("action-button");
-            header.Add(defaultBtn);
+            actions.Add(defaultBtn);
 
             var closeBtn = new Button(Hide) { text = "✕" };
             closeBtn.AddToClassList("close-button");
-            header.Add(closeBtn);
+            actions.Add(closeBtn);
+
+            header.Add(actions);
 
             _panel.Add(header);
 
             // ── Keyboard hint ──────────────────────────────────────────────
-            var kbHint = new Label(Localization.Get("matrix_keyboard_hint"));
-            kbHint.AddToClassList("keyboard-hint");
-            _panel.Add(kbHint);
+            _inputHintLabel = new Label();
+            _inputHintLabel.AddToClassList("keyboard-hint");
+            RefreshInputHint();
+            _panel.Add(_inputHintLabel);
 
             // ── Preset section ─────────────────────────────────────────────
             _panel.Add(BuildPresetSection());
@@ -369,6 +396,7 @@ namespace ParticleLife.UI
             _panel.Add(scrollView);
 
             root.Add(_panel);
+            ApplyResponsiveClasses(root);
         }
 
         /// <summary>
@@ -389,6 +417,15 @@ namespace ParticleLife.UI
             };
 
             _runtimeUiFont = Font.CreateDynamicFontFromOSFont(preferredFonts, 16);
+        }
+
+        private void RefreshInputHint()
+        {
+            if (_inputHintLabel == null)
+                return;
+
+            _inputHintLabel.text = Localization.Get(
+                InputStyle.IsTouch ? "matrix_touch_hint" : "matrix_keyboard_hint");
         }
 
         // ── Show / Hide / Toggle ──────────────────────────────────────────────
@@ -556,6 +593,55 @@ namespace ParticleLife.UI
             if (_saveHintLabel == null) return;
             _saveHintLabel.text = Localization.Get("preset_saved");
             _saveHintLabel.style.display = DisplayStyle.Flex;
+        }
+
+        // ── Responsive layout ─────────────────────────────────────────────────
+
+        private void BindRoot(VisualElement root)
+        {
+            if (_root == root) return;
+            UnregisterRootGeometryCallback();
+            _root = root;
+            _root.RegisterCallback<GeometryChangedEvent>(OnRootGeometryChanged);
+        }
+
+        private void UnregisterRootGeometryCallback()
+        {
+            if (_root == null) return;
+            _root.UnregisterCallback<GeometryChangedEvent>(OnRootGeometryChanged);
+            _root = null;
+        }
+
+        private void OnRootGeometryChanged(GeometryChangedEvent _)
+        {
+            ApplyResponsiveClasses(_root);
+        }
+
+        /// <summary>
+        /// Applies narrow / short / compact classes from panel layout size and
+        /// Screen pixels so WebGL windowed / embed sizes can tighten chrome.
+        /// </summary>
+        private void ApplyResponsiveClasses(VisualElement root)
+        {
+            if (root == null) return;
+
+            _lastScreenWidth  = Screen.width;
+            _lastScreenHeight = Screen.height;
+
+            float layoutW = root.resolvedStyle.width;
+            float layoutH = root.resolvedStyle.height;
+            if (float.IsNaN(layoutW) || layoutW <= 0f) layoutW = _lastScreenWidth;
+            if (float.IsNaN(layoutH) || layoutH <= 0f) layoutH = _lastScreenHeight;
+
+            bool narrow = layoutW < NarrowLayoutWidth || _lastScreenWidth < NarrowScreenWidth;
+            bool shortH = layoutH < ShortLayoutHeight || _lastScreenHeight < ShortScreenHeight;
+            bool compact = (narrow && shortH)
+                        || _lastScreenWidth < CompactScreenWidth
+                        || _lastScreenHeight < CompactScreenHeight;
+
+            root.EnableInClassList("matrix-narrow", narrow);
+            root.EnableInClassList("matrix-short", shortH);
+            root.EnableInClassList("matrix-compact", compact);
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 using System.Collections;
+using ParticleLife.Input;
 using ParticleLife.Management;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -171,6 +172,7 @@ namespace ParticleLife.UI
                 _matrixConfigUI.PanelVisibilityChanged += OnMatrixPanelVisibilityChanged;
 
             Localization.OnLanguageChanged += OnLanguageChangedHandler;
+            InputStyle.Changed += OnInputStyleChanged;
 
             // If the game already starts at MainMenu (normal launch), begin fade-in.
             if (_gameState.CurrentState == GameState.MainMenu)
@@ -232,6 +234,7 @@ namespace ParticleLife.UI
                 _matrixConfigUI.PanelVisibilityChanged -= OnMatrixPanelVisibilityChanged;
 
             Localization.OnLanguageChanged -= OnLanguageChangedHandler;
+            InputStyle.Changed -= OnInputStyleChanged;
         }
 
         private void Update()
@@ -320,6 +323,8 @@ namespace ParticleLife.UI
 
         private void OnLanguageChangedHandler(Localization.Language _) => ApplyLocalization();
 
+        private void OnInputStyleChanged(PlayerInputStyle _) => ApplyLocalization();
+
         private void ApplyLocalization()
         {
             if (_titleText != null)
@@ -338,7 +343,7 @@ namespace ParticleLife.UI
                 configLabel.text = Localization.Get("config");
 
             if (_hintText != null)
-                _hintText.text = Localization.Get("hint_keyboard");
+                _hintText.text = Localization.Get(InputStyle.IsTouch ? "hint_touch" : "hint_keyboard");
 
             TMPro.TextMeshProUGUI langLabel = _langButton != null
                 ? _langButton.GetComponentInChildren<TMPro.TextMeshProUGUI>()
