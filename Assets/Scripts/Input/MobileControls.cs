@@ -132,6 +132,7 @@ namespace ParticleLife.Input
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             // Above HUD (10), below failure (80) / main menu (100) / matrix (200).
             canvas.sortingOrder = 20;
+            GameFonts.EnableTmpOnCanvas(canvas);
 
             var scaler = go.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
@@ -266,6 +267,7 @@ namespace ParticleLife.Input
             rect.offsetMax = Vector2.zero;
 
             var tmp = go.AddComponent<TextMeshProUGUI>();
+            GameFonts.ApplyTo(tmp);
             tmp.text = text;
             tmp.fontSize = fontSize;
             tmp.alignment = TextAlignmentOptions.Center;

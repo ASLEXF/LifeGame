@@ -54,7 +54,6 @@ namespace ParticleLife.UI
         private UIDocument    _document;
         private bool          _isOpen;
         private bool          _lastIsAssigned;
-        private Font          _runtimeUiFont;
         private StyleSheet    _matrixStyleSheet;
         private int           _matrixSizeSnapshot;
         private Label         _inputHintLabel;
@@ -143,10 +142,7 @@ namespace ParticleLife.UI
             BindRoot(root);
             root.Clear();
             root.AddToClassList("matrix-root");
-            EnsureRuntimeUiFont();
-
-            if (_runtimeUiFont != null)
-                root.style.unityFontDefinition = FontDefinition.FromFont(_runtimeUiFont);
+            GameFonts.ApplyTo(root);
 
             if (_matrixStyleSheet == null)
                 _matrixStyleSheet = Resources.Load<StyleSheet>("MatrixConfigUI");
@@ -397,26 +393,6 @@ namespace ParticleLife.UI
 
             root.Add(_panel);
             ApplyResponsiveClasses(root);
-        }
-
-        /// <summary>
-        /// Creates a runtime font with CJK coverage so UI Toolkit text can render
-        /// localized Chinese strings even when project font assets are limited.
-        /// </summary>
-        private void EnsureRuntimeUiFont()
-        {
-            if (_runtimeUiFont != null) return;
-
-            string[] preferredFonts =
-            {
-                "Microsoft YaHei UI",
-                "Microsoft YaHei",
-                "SimHei",
-                "Arial Unicode MS",
-                "Segoe UI",
-            };
-
-            _runtimeUiFont = Font.CreateDynamicFontFromOSFont(preferredFonts, 16);
         }
 
         private void RefreshInputHint()
